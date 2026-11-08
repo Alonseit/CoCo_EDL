@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZeroBudget - Finanzas Familiares</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .toggle-checkbox:checked { right: 0; border-color: #10B981; }
+        .toggle-checkbox:checked + .toggle-label { background-color: #10B981; }
+        .toggle-checkbox { right: 0; z-index: 1; border-color: #e5e7eb; transition: all 0.3s; }
+        .toggle-label { width: 3rem; height: 1.5rem; background-color: #e5e7eb; border-radius: 9999px; transition: all 0.3s; }
+    </style>
+</head>
+<body class="text-gray-800 h-screen flex flex-col overflow-hidden">
+
+    <!-- Header / Navbar -->
+    <header class="bg-white shadow-sm z-10 relative">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <div class="bg-emerald-500 text-white p-2 rounded-lg">
+                    <i class="fa-solid fa-wallet"></i>
+                </div>
+                <h1 class="text-xl font-bold tracking-tight text-gray-900 hidden sm:block">ZeroBudget</h1>
+            </div>
+            
+            <div id="nav-month-selector" class="hidden items-center gap-4">
+                <button onclick="app.prevMonth()" class="p-2 hover:bg-gray-100 rounded-full"><i class="fa-solid fa-chevron-left"></i></button>
+                <span id="current-month-display" class="font-semibold text-lg w-32 text-center">...</span>
+                <button onclick="app.nextMonth()" class="p-2 hover:bg-gray-100 rounded-full"><i class="fa-solid fa-chevron-right"></i></button>
+            </div>
+
+            <div class="flex items-center gap-4">
+                <div class="flex items-center gap-2">
+                    <span class="text-sm text-gray-500 hidden sm:inline">Visor</span>
+                    <div class="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in">
+                        <input type="checkbox" name="toggle" id="mode-toggle" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer" onclick="app.toggleMode()"/>
+                        <label for="mode-toggle" class="toggle-label block overflow-hidden h-6 rounded-full bg-gray-300 cursor-pointer"></label>
+                    </div>
+                    <span class="text-sm font-medium text-gray-700">Admin</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Admin Subnav -->
+        <div id="admin-subnav" class="hidden bg-gray-50 border-b border-gray-200">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex overflow-x-auto hide-scrollbar">
+                <button onclick="app.setTab('budget')" id="tab-budget" class="whitespace-nowrap py-3 px-4 border-b-2 border-emerald-500 text-emerald-600 font-medium text-sm">Presupuesto</button>
+                <button onclick="app.setTab('transactions')" id="tab-transactions" class="whitespace-nowrap py-3 px-4 border-b-2 border-transparent text-gray-500 hover:text-gray-700 font-medium text-sm">Transacciones</button>
+                <button onclick="app.setTab('accounts')" id="tab-accounts" class="whitespace-nowrap py-3 px-4 border-b-2 border-transparent text-gray-500 hover:text-gray-700 font-medium text-sm">Cuentas</button>
+                <button onclick="app.setTab('settings')" id="tab-settings" class="whitespace-nowrap py-3 px-4 border-b-2 border-transparent text-gray-500 hover:text-gray-700 font-medium text-sm">Ajustes y Categorías</button>
+                <button onclick="app.setTab('data')" id="tab-data" class="whitespace-nowrap py-3 px-4 border-b-2 border-transparent text-gray-500 hover:text-gray-700 font-medium text-sm">Base de Datos</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8" id="main-content"></main>
+
+    <!-- Modal Root -->
+    <div id="modal-overlay" class="hidden fixed inset-0 bg-gray-900 bg-opacity-50 z-50 flex items-center justify-center p-4 backdrop-blur-sm transition-opacity">
+        <div id="modal-content" class="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden transform transition-all scale-100 max-h-[90vh] overflow-y-auto"></div>
+    </div>
+
+    <!-- Toast Notification Container -->
+    <div id="toast-container" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2"></div>
+
+    <script>
+        // === CONFIGURACIÓN DE CONEXIÓN ===
+        const GAS_URL = 'https://script.google.com/macros/s/AKfycbw4I5BS1QlAlZ1V_4nycnDEqdOf-fiMI5YkD4s1aKdKppPo1vpmKA4Rgj_75QSK_uU/exec';
+        
+        let APP_PIN = null;
+
+        // --- UTILS & FORMATTING ---
+        const formatCurrency = (amount) => new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(amount);
+        const formatDate = (dateString) => {
+            if(!dateString) return '';
+            const [y, m, d] = dateString.split('-');
+            return `${d}/${m}/${y}`;
+        };
+        const generateId = () => Math.random().toString(36).substr(2, 9);
+        const getMonthString = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+        
+        // --- TOAST & MODAL UI ---
+        const ui = {
+            showToast: (message, type = 'info') => {
+                const container = document.getElementById('toast-container');
+                const toast = document.createElement('div');
+                const colors = type === 'error' ? 'bg-red-600' : (type === 'success' ? 'bg-emerald-600' : 'bg-gray-800');
+                toast.className = `${colors} text-white px-6 py-3 rounded-lg shadow-lg transform transition-all duration-300 translate-y-10 opacity-0 flex items-center gap-3`;
+                const icon = type === 'error' ? 'fa-circle-exclamation' : (type === 'success' ? 'fa-check-circle' : 'fa-info-circle');
+                toast.innerHTML = `<i class="fa-solid ${icon}"></i> <span>${message}</span>`;
+                container.appendChild(toast);
+                requestAnimationFrame(() => toast.classList.remove('translate-y-10', 'opacity-0'));
+                setTimeout(() => { toast.classList.add('translate-y-10', 'opacity-0'); setTimeout(() => toast.remove(), 300); }, 3000);
+            },
+            showModal: (title, bodyHtml, footerHtml = '') => {
+                const content = document.getElementById('modal-content');
+                content.innerHTML = `<div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50 sticky top-0 z-10"><h3 class="text-lg font-semibold text-gray-800">${title}</h3><button onclick="ui.closeModal()" class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark text-xl"></i></button></div><div class="p-6">${bodyHtml}</div>${footerHtml ? `<div class="px-6 py-4 border-t border-gray-100 bg-gray-50 flex justify-end gap-3 sticky bottom-0">${footerHtml}</div>` : ''}`;
+                document.getElementById('modal-overlay').classList.remove('hidden');
+            },
+            closeModal: () => document.getElementById('modal-overlay').classList.add('hidden')
+        };
+
+        // --- ENCRIPTACIÓN AES-GCM ---
+        const cryptoEngine = {
+            str2ab: (str) => new TextEncoder().encode(str),
+            ab2base64: (buffer) => btoa(String.fromCharCode.apply(null, new Uint8Array(buffer))),
+            base642ab: (base64) => {
+                const binaryString = atob(base64);
+                const len = binaryString.length;
+                const bytes = new Uint8Array(len);
+                for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
+                return bytes.buffer;
+            },
+            deriveKey: async (password) => {
+                const enc = new TextEncoder();
+                const keyMaterial = await crypto.subtle.importKey("raw", enc.encode(password), { name: "PBKDF2" }, false, ["deriveKey"]);
+                const salt = enc.encode("ZeroBudget_Family_Salt_2026"); 
+                return await crypto.subtle.deriveKey(
+                    { name: "PBKDF2", salt: salt, iterations: 100000, hash: "SHA-256" },
+                    keyMaterial, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]
+                );
+            },
+            encryptData: async (dataObj, password) => {
+                const key = await cryptoEngine.deriveKey(password);
+                const iv = crypto.getRandomValues(new Uint8Array(12));
+                const encodedData = cryptoEngine.str2ab(JSON.stringify(dataObj));
+                const encryptedContent = await crypto.subtle.encrypt({ name: "AES-GCM", iv: iv }, key, encodedData);
+                const encryptedBytes = new Uint8Array(encryptedContent);
+                const payload = new Uint8Array(iv.length + encryptedBytes.length);
+                payload.set(iv, 0); payload.set(encryptedBytes, iv.length);
+                return cryptoEngine.ab2base64(payload.buffer);
+            },
+            decryptData: async (base64String, password) => {
+                try {
+                    const key = await cryptoEngine.deriveKey(password);
+                    const payloadBuffer = cryptoEngine.base642ab(base64String);
+                    const payload = new Uint8Array(payloadBuffer);
+                    const iv = payload.slice(0, 12);
+                    const encryptedContent = payload.slice(12);
+                    const decryptedBuffer = await crypto.subtle.decrypt({ name: "AES-GCM", iv: iv }, key, encryptedContent);
+                    return JSON.parse(new TextDecoder().decode(decryptedBuffer));
+                } catch (error) { throw new Error("Clave incorrecta o datos corruptos"); }
+            }
+        };
+
+        // --- STATE & PERSISTENCE ---
+        const store = {
+            data: null,
+            requestPin: () => {
+                return new Promise((resolve) => {
+                    if (APP_PIN) { resolve(APP_PIN); return; }
+                    
+                    const body = `
+                        <div class="text-center space-y-4">
+                            <div class="text-4xl mb-2">🔐</div>
+                            <p class="text-sm text-gray-600">Introduce tu clave maestra para descifrar la base de datos familiar.</p>
+                            <input type="password" id="crypto-pin" class="w-full border-gray-300 rounded-lg shadow-sm p-3 text-center text-2xl tracking-[0.2em] focus:ring-emerald-500 outline-none" placeholder="••••">
+                        </div>
+                    `;
+                    const footer = `
+                        <button onclick="
+                            const p = document.getElementById('crypto-pin').value;
+                            if(p) { ui.closeModal(); APP_PIN = p; resolve(p); }
+                            else { ui.showToast('El PIN no puede estar vacío', 'error'); }
+                        " class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-lg transition">Desbloquear</button>
+                    `;
+                    
+                    ui.showModal('Bóveda Familiar', body, footer);
+                    
+                    // Foco automático y soporte para tecla Enter
+                    setTimeout(() => {
+                        const input = document.getElementById('crypto-pin');
+                        if(input) {
+                            input.focus();
+                            input.addEventListener('keypress', (e) => {
+                                if (e.key === 'Enter') {
+                                    const p = input.value;
+                                    if(p) { ui.closeModal(); APP_PIN = p; resolve(p); }
+                                }
+                            });
+                        }
+                    }, 100);
+                });
+            },
+            init: async () => {
+                try {
+                    const pin = await store.requestPin();
+                    const localEncrypted = localStorage.getItem('zenbudget_data_enc');
+                    
+                    if (localEncrypted) {
+                        try { 
+                            store.data = await cryptoEngine.decryptData(localEncrypted, pin);
+                            app.render(); 
+                        } catch(e) { 
+                            ui.showToast("Caché local ilegible (PIN erróneo). Recarga la página.", "error"); 
+                            APP_PIN = null; return;
+                        }
+                    }
+
+                    if(GAS_URL === 'PEGA_AQUI_LA_URL_DEL_WEBAPP_DE_GAS') {
+                        console.warn("Modo 100% offline.");
+                        if (!store.data) { store.data = store.generateMockData(); await store.save(); app.render(); }
+                        return;
+                    }
+
+                    ui.showToast("Sincronizando nube...", "info");
+                    
+                    // --- NUEVA LÓGICA DE DESEMPAQUETADO JSON PARA EVITAR CORS ---
+                    const response = await fetch(GAS_URL);
+                    const serverJsonResponse = await response.json(); 
+                    const encryptedPayloadBase64 = serverJsonResponse.payload;
+                    
+                    if (encryptedPayloadBase64 && encryptedPayloadBase64.length > 10) {
+                        try {
+                            store.data = await cryptoEngine.decryptData(encryptedPayloadBase64, pin);
+                            const newEncrypted = await cryptoEngine.encryptData(store.data, pin);
+                            localStorage.setItem('zenbudget_data_enc', newEncrypted);
+                            app.render();
+                            ui.showToast("Sincronización completa", "success");
+                        } catch(e) {
+                            ui.showToast("Fallo al descifrar nube. ¿PIN incorrecto?", "error");
+                            APP_PIN = null;
+                        }
+                    } else if (!store.data) {
+                        store.data = store.generateMockData();
+                        await store.save(); 
+                        app.render();
+                    }
+                } catch(e) { 
+                    console.error("Error en init (Fallo de red o CORS):", e);
+                    if (!store.data) {
+                        store.data = store.generateMockData();
+                    }
+                    app.render();
+                    ui.showToast("Operando en local (Conexión fallida)", "error");
+                }
+            },
+            save: async () => {
+                if (!APP_PIN || !store.data) return;
+                try {
+                    const encryptedPayloadBase64 = await cryptoEngine.encryptData(store.data, APP_PIN);
+                    localStorage.setItem('zenbudget_data_enc', encryptedPayloadBase64);
+                    
+                    if (GAS_URL !== 'PEGA_AQUI_LA_URL_DEL_WEBAPP_DE_GAS') {
+                        // El POST sigue enviando la cadena plana en base64 (text/plain) para evitar el preflight de CORS en escrituras.
+                        fetch(GAS_URL, {
+                            method: 'POST',
+                            body: encryptedPayloadBase64,
+                            headers: { 'Content-Type': 'text/plain;charset=utf-8' }
+                        }).catch(e => ui.showToast("Fallo red. Guardado local.", "error"));
+                    }
+                } catch(e) { ui.showToast("Fallo crítico de encriptación al guardar.", "error"); }
+            },
+            exportJSON: () => {
+                const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(store.data));
+                const dlAnchorElem = document.createElement('a');
+                dlAnchorElem.setAttribute("href", dataStr);
+                dlAnchorElem.setAttribute("download", `zero_budget_backup_${store.data.settings.currentMonth}.json`);
+                dlAnchorElem.click();
+            },
+            importJSON: (jsonString) => {
+                try {
+                    const parsed = JSON.parse(jsonString);
+                    if(parsed && parsed.accounts && parsed.categories) {
+                        store.data = parsed;
+                        store.save(); 
+                        ui.showToast("Base de datos importada y cifrada", "success");
+                        app.render();
+                    } else throw new Error("Inválido");
+                } catch(e) { ui.showToast("Error importando", "error"); }
+            },
+            generateMockData: () => {
+                const tm = getMonthString(new Date());
+                return {
+                    accounts: [{ id: 'acc_1', name: 'Cuenta Corriente', type: 'checking' }],
+                    categoryGroups: [{ id: 'grp_1', name: 'Gastos de Vivienda' }, { id: 'grp_2', name: 'Diario' }],
+                    categories: [{ id: 'cat_1', groupId: 'grp_1', name: 'Alquiler/Hipoteca', type: 'fixed', target: 1000 }, { id: 'cat_2', groupId: 'grp_2', name: 'Supermercado', type: 'variable', target: 450 }],
+                    transactions: [],
+                    allocations: { [tm]: { 'cat_1': 1000, 'cat_2': 450 } },
+                    settings: { lastReconciled: `${tm}-01`, currentMonth: tm, isAdmin: true, activeTab: 'settings' }
+                };
+            }
+        };
+
+        // --- FINANCIAL ENGINE ---
+        const engine = {
+            getMonthsUpTo: (targetMonth) => {
+                let months = new Set([targetMonth]);
+                store.data.transactions.forEach(t => months.add(t.date.substring(0, 7)));
+                Object.keys(store.data.allocations).forEach(m => months.add(m));
+                return Array.from(months).sort();
+            },
+            getActivity: (categoryId, month) => store.data.transactions.filter(t => t.categoryId === categoryId && t.date.startsWith(month)).reduce((sum, t) => sum + t.amount, 0),
+            getCategoryAvailable: (categoryId, targetMonth) => {
+                let available = 0;
+                for (let m of engine.getMonthsUpTo(targetMonth)) {
+                    if (m > targetMonth) break;
+                    available += ((store.data.allocations[m] && store.data.allocations[m][categoryId]) ? store.data.allocations[m][categoryId] : 0) + engine.getActivity(categoryId, m);
+                }
+                return available;
+            },
+            getToBeAssigned: (month) => {
+                const cash = store.data.transactions.filter(t => t.date.substring(0, 7) <= month).reduce((sum, t) => sum + t.amount, 0);
+                let catAvailable = 0;
+                store.data.categories.forEach(c => { const avail = engine.getCategoryAvailable(c.id, month); if (avail > 0) catAvailable += avail; });
+                return cash - catAvailable;
+            },
+            getAgeOfMoney: () => {
+                let inflows = store.data.transactions.filter(t => t.amount > 0).sort((a,b) => a.date.localeCompare(b.date));
+                let outflows = store.data.transactions.filter(t => t.amount < 0).sort((a,b) => a.date.localeCompare(b.date));
+                let buckets = inflows.map(t => ({ date: new Date(t.date), amount: t.amount }));
+                let aomList = [];
+                for (let out of outflows) {
+                    let expenseAmount = Math.abs(out.amount);
+                    let expenseDate = new Date(out.date);
+                    let age = 0;
+                    let initial = expenseAmount;
+                    while (expenseAmount > 0 && buckets.length > 0) {
+                        let toTake = Math.min(expenseAmount, buckets[0].amount);
+                        age += Math.floor(Math.abs(expenseDate - buckets[0].date) / 86400000) * (toTake / initial);
+                        expenseAmount -= toTake; buckets[0].amount -= toTake;
+                        if (buckets[0].amount <= 0) buckets.shift();
+                    }
+                    aomList.push(age);
+                }
+                if (aomList.length === 0) return 0;
+                return Math.round(aomList.slice(-10).reduce((a,b) => a + b, 0) / Math.min(aomList.length, 10));
+            },
+            autoAssignMonth: (month) => {
+                if (!store.data.allocations[month]) store.data.allocations[month] = {};
+                let p = month.split('-');
+                let prevMonth = getMonthString(new Date(p[0], p[1]-2, 1));
+                let tba = engine.getToBeAssigned(month);
+
+                store.data.categories.forEach(c => {
+                    const assigned = store.data.allocations[month][c.id] || 0;
+                    let toAssign = c.type === 'variable' 
+                        ? Math.max(0, c.target - Math.max(0, engine.getCategoryAvailable(c.id, prevMonth))) - assigned 
+                        : (c.target || 0) - assigned;
+                    
+                    if (toAssign > 0 && tba >= toAssign) {
+                        store.data.allocations[month][c.id] = assigned + toAssign;
+                        tba -= toAssign;
+                    }
+                });
+                store.save(); app.render(); ui.showToast("Asignación completada", "success");
+            },
+            getDaysSinceReconciliation: () => store.data.settings.lastReconciled ? Math.floor(Math.abs(new Date() - new Date(store.data.settings.lastReconciled)) / 86400000) : "?"
+        };
+
+        // --- VIEWS & CONTROLLERS ---
+        const app = {
+            init: async () => {
+                await store.init();
+                if(store.data) document.getElementById('mode-toggle').checked = store.data.settings.isAdmin;
+            },
+            toggleMode: () => { store.data.settings.isAdmin = document.getElementById('mode-toggle').checked; store.save(); app.render(); },
+            setTab: (tabId) => { store.data.settings.activeTab = tabId; store.save(); app.render(); },
+            prevMonth: () => { let p = store.data.settings.currentMonth.split('-'); store.data.settings.currentMonth = getMonthString(new Date(p[0], p[1] - 2, 1)); store.save(); app.render(); },
+            nextMonth: () => { let p = store.data.settings.currentMonth.split('-'); store.data.settings.currentMonth = getMonthString(new Date(p[0], p[1], 1)); store.save(); app.render(); },
+            render: () => {
+                if(!store.data) return;
+                const isAdmin = store.data.settings.isAdmin;
+                const m = store.data.settings.currentMonth.split('-');
+                document.getElementById('current-month-display').innerText = `${['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'][parseInt(m[1])-1]} ${m[0]}`;
+                
+                if (isAdmin) {
+                    document.getElementById('nav-month-selector').classList.replace('hidden', 'flex');
+                    document.getElementById('admin-subnav').classList.remove('hidden');
+                    ['budget', 'transactions', 'accounts', 'settings', 'data'].forEach(t => {
+                        const el = document.getElementById(`tab-${t}`);
+                        if(store.data.settings.activeTab === t) el.classList.replace('border-transparent', 'border-emerald-500'), el.classList.replace('text-gray-500', 'text-emerald-600');
+                        else el.classList.replace('border-emerald-500', 'border-transparent'), el.classList.replace('text-emerald-600', 'text-gray-500');
+                    });
+                    if(store.data.settings.activeTab === 'budget') app.renderAdminBudget();
+                    else if(store.data.settings.activeTab === 'transactions') app.renderAdminTransactions();
+                    else if(store.data.settings.activeTab === 'accounts') app.renderAdminAccounts();
+                    else if(store.data.settings.activeTab === 'settings') settingsApp.renderAdminSettings();
+                    else if(store.data.settings.activeTab === 'data') app.renderAdminData();
+                } else {
+                    document.getElementById('nav-month-selector').classList.replace('flex', 'hidden');
+                    document.getElementById('admin-subnav').classList.add('hidden');
+                    app.renderViewer();
+                }
+            },
+            // --- VIEWER MODE ---
+            renderViewer: () => {
+                const month = store.data.settings.currentMonth;
+                let html = `<div class="max-w-3xl mx-auto space-y-6 pb-20"><div class="grid grid-cols-2 gap-4"><div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 flex flex-col items-center justify-center"><span class="text-xs text-gray-500 font-medium uppercase tracking-wider mb-1">Última Conciliación</span><div class="flex items-baseline gap-2"><span class="text-3xl font-bold ${engine.getDaysSinceReconciliation() > 7 ? 'text-red-500' : 'text-emerald-600'}">${engine.getDaysSinceReconciliation()}</span><span class="text-sm text-gray-500">días</span></div></div><div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 flex flex-col items-center justify-center"><span class="text-xs text-gray-500 font-medium uppercase tracking-wider mb-1">Edad del Dinero</span><div class="flex items-baseline gap-2"><span class="text-3xl font-bold text-indigo-600">${engine.getAgeOfMoney()}</span><span class="text-sm text-gray-500">días</span></div></div></div>`;
+                store.data.categoryGroups.forEach(g => {
+                    const cats = store.data.categories.filter(c => c.groupId === g.id);
+                    if(cats.length === 0) return;
+                    html += `<div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden"><div class="bg-gray-50 px-4 py-3 border-b border-gray-100"><h2 class="text-sm font-bold text-gray-700 uppercase tracking-wide">${g.name}</h2></div><div class="divide-y divide-gray-50">`;
+                    cats.forEach(c => {
+                        const available = engine.getCategoryAvailable(c.id, month);
+                        const target = c.target || 0;
+                        const ratio = Math.min(100, Math.max(0, target > 0 ? (available / target) * 100 : (available > 0 ? 100 : 0)));
+                        const barColor = available < 0 ? 'bg-red-500' : (target > 0 ? (ratio > 30 ? 'bg-emerald-500' : (ratio > 0 ? 'bg-yellow-400' : 'bg-gray-300')) : (available > 0 ? 'bg-emerald-500' : 'bg-gray-300'));
+                        html += `<div class="p-4 hover:bg-gray-50 transition-colors"><div class="flex justify-between items-end mb-2"><div><h3 class="font-medium text-gray-800">${c.name}</h3></div><div class="text-right"><div class="text-lg font-bold ${available < 0 ? 'text-red-600' : 'text-gray-900'}">${formatCurrency(available)}</div></div></div><div class="w-full bg-gray-100 rounded-full h-2"><div class="${barColor} h-2 rounded-full" style="width: ${ratio}%"></div></div></div>`;
+                    });
+                    html += `</div></div>`;
+                });
+                document.getElementById('main-content').innerHTML = html + `</div>`;
+            },
+            // --- ADMIN BUDGET ---
+            renderAdminBudget: () => {
+                const month = store.data.settings.currentMonth;
+                const tba = engine.getToBeAssigned(month);
+                let html = `<div class="max-w-5xl mx-auto space-y-6 pb-20"><div class="${tba >= 0 ? 'bg-emerald-600' : 'bg-red-600'} text-white rounded-xl shadow-lg p-6 flex flex-col sm:flex-row items-center justify-between gap-4"><div><h2 class="text-emerald-100 text-sm font-semibold uppercase tracking-widest mb-1">Disponible para Asignar</h2><div class="text-4xl font-bold tracking-tight">${formatCurrency(tba)}</div></div><button onclick="engine.autoAssignMonth('${month}')" class="bg-white/20 hover:bg-white/30 backdrop-blur-sm px-5 py-2.5 rounded-lg text-white font-medium flex items-center gap-2"><i class="fa-solid fa-wand-magic-sparkles"></i> Auto-asignar</button></div><div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden"><table class="w-full text-left border-collapse"><thead><tr class="bg-gray-50 border-b border-gray-200 text-xs uppercase text-gray-500"><th class="p-4 font-semibold">Categoría</th><th class="p-4 font-semibold text-right w-32">Asignado</th><th class="p-4 font-semibold hidden md:table-cell text-right">Actividad</th><th class="p-4 font-semibold text-right">Disponible</th></tr></thead><tbody class="divide-y divide-gray-100">`;
+                
+                if(store.data.categoryGroups.length === 0) {
+                    html += `<tr><td colspan="4" class="p-8 text-center text-gray-500">No hay categorías configuradas. Ve a "Ajustes y Categorías" para crear tu presupuesto.</td></tr>`;
+                }
+
+                store.data.categoryGroups.forEach(g => {
+                    const cats = store.data.categories.filter(c => c.groupId === g.id);
+                    if(cats.length === 0) return;
+                    html += `<tr class="bg-gray-50/50"><td colspan="4" class="p-3 pl-4 text-xs font-bold text-gray-700 uppercase">${g.name}</td></tr>`;
+                    cats.forEach(c => {
+                        const assigned = store.data.allocations[month]?.[c.id] || 0;
+                        const act = engine.getActivity(c.id, month);
+                        const disp = engine.getCategoryAvailable(c.id, month);
+                        html += `<tr class="hover:bg-gray-50"><td class="p-4"><div class="font-medium text-gray-900">${c.name}</div><div class="text-xs text-gray-400">Meta: ${formatCurrency(c.target)}</div></td><td class="p-4 text-right"><input type="number" step="0.01" value="${assigned.toFixed(2)}" onchange="app.updateAllocation('${month}', '${c.id}', this.value)" class="w-full border border-gray-300 rounded-lg py-1.5 px-2 text-right focus:ring-emerald-500 outline-none text-sm"></td><td class="p-4 text-right text-gray-500 hidden md:table-cell">${formatCurrency(act)}</td><td class="p-4 text-right"><span onclick="if(${disp} < 0) app.openCoverModal('${month}', '${c.id}', ${Math.abs(disp)})" class="px-3 py-1 rounded-full text-sm ${disp < 0 ? 'bg-red-100 text-red-700 font-bold cursor-pointer hover:bg-red-200' : (disp > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100')}">${formatCurrency(disp)}</span></td></tr>`;
+                    });
+                });
+                document.getElementById('main-content').innerHTML = html + `</tbody></table></div></div>`;
+            },
+            updateAllocation: (month, catId, valStr) => {
+                if(!store.data.allocations[month]) store.data.allocations[month] = {};
+                store.data.allocations[month][catId] = isNaN(parseFloat(valStr)) ? 0 : parseFloat(valStr);
+                store.save(); app.render();
+            },
+            openCoverModal: (month, targetId, amountNeeded) => {
+                let opts = '';
+                store.data.categories.forEach(c => {
+                    const avail = engine.getCategoryAvailable(c.id, month);
+                    if(c.id !== targetId && avail > 0) opts += `<option value="${c.id}">${c.name} (${formatCurrency(avail)} disp.)</option>`;
+                });
+                if(!opts) return ui.showToast("Sin saldo positivo para cubrir", "error");
+                ui.showModal('Cubrir Descubierto', `<p class="mb-4 text-sm text-gray-600">Mueve dinero para cubrir <strong>${formatCurrency(-amountNeeded)}</strong>.</p><select id="cov-src" class="w-full p-2 border rounded-lg mb-4">${opts}</select><input type="number" id="cov-amt" value="${amountNeeded.toFixed(2)}" class="w-full p-2 border rounded-lg">`, `<button onclick="ui.closeModal()" class="px-4 py-2 bg-gray-50 rounded-lg border">Cancelar</button><button onclick="app.executeCover('${month}', '${targetId}')" class="px-4 py-2 bg-emerald-600 text-white rounded-lg">Cubrir</button>`);
+            },
+            executeCover: (month, targetId) => {
+                const srcId = document.getElementById('cov-src').value, amt = parseFloat(document.getElementById('cov-amt').value);
+                if(isNaN(amt) || amt <= 0) return;
+                if(!store.data.allocations[month]) store.data.allocations[month] = {};
+                store.data.allocations[month][srcId] = (store.data.allocations[month][srcId] || 0) - amt;
+                store.data.allocations[month][targetId] = (store.data.allocations[month][targetId] || 0) + amt;
+                store.save(); ui.closeModal(); app.render(); ui.showToast("Transferido", "success");
+            },
+            // --- ADMIN TRANSACTIONS ---
+            renderAdminTransactions: () => {
+                const txs = [...store.data.transactions].sort((a, b) => b.date.localeCompare(a.date));
+                let catOpts = `<option value="">-- Ingreso a Asignar --</option>`, accOpts = '';
+                store.data.categories.forEach(c => catOpts += `<option value="${c.id}">${c.name}</option>`);
+                store.data.accounts.forEach(a => accOpts += `<option value="${a.id}">${a.name}</option>`);
+                
+                let html = `<div class="max-w-6xl mx-auto space-y-6 pb-20"><div class="bg-white rounded-xl shadow-sm border p-5"><div class="grid grid-cols-1 md:grid-cols-6 gap-4 items-end"><div><label class="block text-xs text-gray-500 mb-1">Fecha</label><input type="date" id="tx-date" value="${new Date().toISOString().split('T')[0]}" class="w-full border p-2 rounded-lg text-sm"></div><div class="md:col-span-2"><label class="block text-xs text-gray-500 mb-1">Concepto</label><input type="text" id="tx-payee" class="w-full border p-2 rounded-lg text-sm"></div><div><label class="block text-xs text-gray-500 mb-1">Categoría</label><select id="tx-cat" class="w-full border p-2 rounded-lg text-sm">${catOpts}</select></div><div><label class="block text-xs text-gray-500 mb-1">Cuenta</label><select id="tx-acc" class="w-full border p-2 rounded-lg text-sm">${accOpts}</select></div><div><label class="block text-xs text-gray-500 mb-1">Importe</label><div class="flex gap-2"><input type="number" id="tx-amount" step="0.01" class="w-full border p-2 rounded-lg text-sm"><button onclick="app.addTx()" class="bg-emerald-600 text-white rounded-lg px-4 py-2"><i class="fa-solid fa-plus"></i></button></div></div></div></div><div class="bg-white rounded-xl shadow-sm border overflow-x-auto"><table class="w-full text-left"><thead class="bg-gray-50 border-b text-xs uppercase text-gray-500"><th class="p-4 w-12"><i class="fa-solid fa-check-double"></i></th><th class="p-4">Fecha</th><th class="p-4">Beneficiario</th><th class="p-4 text-right">Importe</th><th class="p-4 w-12"></th></thead><tbody class="divide-y divide-gray-100 text-sm">`;
+                
+                if(store.data.accounts.length === 0) {
+                    html += `<tr><td colspan="5" class="p-8 text-center text-gray-500">Crea una cuenta en 'Cuentas' antes de añadir transacciones.</td></tr>`;
+                } else {
+                    txs.forEach(t => { html += `<tr class="hover:bg-gray-50"><td class="p-4 text-center"><input type="checkbox" ${t.cleared ? 'checked' : ''} onchange="app.toggleTx('${t.id}', this.checked)" class="text-emerald-600"></td><td class="p-4 text-gray-500">${formatDate(t.date)}</td><td class="p-4 font-medium">${t.payee}</td><td class="p-4 text-right ${t.amount > 0 ? 'text-emerald-600 font-medium' : 'text-gray-900'}">${formatCurrency(t.amount)}</td><td class="p-4 text-center"><button onclick="app.delTx('${t.id}')" class="text-red-400 hover:text-red-600"><i class="fa-solid fa-trash-can"></i></button></td></tr>`; });
+                }
+                document.getElementById('main-content').innerHTML = html + `</tbody></table></div></div>`;
+            },
+            addTx: () => {
+                const date = document.getElementById('tx-date').value, payee = document.getElementById('tx-payee').value, amount = parseFloat(document.getElementById('tx-amount').value), acc = document.getElementById('tx-acc').value;
+                if(!date || !payee || isNaN(amount) || !acc) return ui.showToast("Rellena todos los campos (se requiere cuenta)", "error");
+                store.data.transactions.push({ id: generateId(), date, payee, categoryId: document.getElementById('tx-cat').value || null, accountId: acc, amount, cleared: false });
+                store.save(); app.render(); ui.showToast("Añadida", "success");
+            },
+            delTx: (id) => { store.data.transactions = store.data.transactions.filter(t => t.id !== id); store.save(); app.render(); },
+            toggleTx: (id, c) => { const t = store.data.transactions.find(x => x.id === id); if(t) { t.cleared = c; if(c) store.data.settings.lastReconciled = new Date().toISOString().split('T')[0]; store.save(); } },
+            // --- ADMIN ACCOUNTS ---
+            renderAdminAccounts: () => {
+                let html = `<div class="max-w-4xl mx-auto space-y-6 pb-20">
+                    <div class="flex justify-between items-center">
+                        <h2 class="text-lg font-bold text-gray-800">Cuentas Operativas</h2>
+                        <button onclick="settingsApp.openAccountModal()" class="bg-gray-800 hover:bg-gray-900 text-white px-4 py-2 rounded-lg text-sm"><i class="fa-solid fa-plus mr-2"></i>Nueva Cuenta</button>
+                    </div>
+                    <div class="bg-white rounded-xl shadow-sm border overflow-hidden"><div class="divide-y divide-gray-100">`;
+                
+                let liq = 0;
+                store.data.accounts.forEach(a => {
+                    const b = store.data.transactions.filter(t => t.accountId === a.id).reduce((s, t) => s + t.amount, 0); liq += b;
+                    html += `<div class="p-5 flex justify-between items-center group"><div><div class="font-medium">${a.name}</div><div class="text-xs text-gray-500 capitalize">${a.type === 'checking' ? 'Corriente' : (a.type === 'saving' ? 'Ahorro' : 'Efectivo')}</div></div><div class="flex items-center gap-4"><div class="text-xl font-bold">${formatCurrency(b)}</div><button onclick="settingsApp.openAccountModal('${a.id}')" class="text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 transition"><i class="fa-solid fa-pen-to-square"></i></button></div></div>`;
+                });
+                document.getElementById('main-content').innerHTML = html + `<div class="p-5 bg-gray-100 flex justify-between font-bold text-emerald-600"><div class="text-gray-800 uppercase text-sm">Liquidez Total</div><div class="text-2xl">${formatCurrency(liq)}</div></div></div></div>`;
+            },
+            // --- ADMIN DATA ---
+            renderAdminData: () => {
+                document.getElementById('main-content').innerHTML = `
+                    <div class="max-w-4xl mx-auto space-y-6 pb-20"><div class="grid grid-cols-1 md:grid-cols-2 gap-6"><div class="bg-white rounded-xl shadow-sm border p-6"><h3 class="text-lg font-bold mb-2">Base de Datos</h3><p class="text-sm text-gray-500 mb-6">Backup de JSON desencriptado.</p><button onclick="store.exportJSON()" class="w-full bg-emerald-600 text-white py-2.5 rounded-lg mb-4">Exportar JSON (Plano)</button><input type="file" id="json-in" class="hidden" accept=".json" onchange="const r=new FileReader(); r.onload=e=>store.importJSON(e.target.result); r.readAsText(event.target.files[0])"><button onclick="document.getElementById('json-in').click()" class="w-full border py-2.5 rounded-lg">Importar JSON</button></div><div class="bg-white rounded-xl shadow-sm border p-6"><h3 class="text-lg font-bold mb-2">Extracto CSV</h3><textarea id="csv-area" rows="6" class="w-full border rounded-lg p-3 text-sm mb-4 font-mono" placeholder="YYYY-MM-DD&#9;Concepto&#9;-45.50"></textarea><button onclick="app.importCSV()" class="w-full bg-gray-800 text-white py-2.5 rounded-lg">Procesar CSV</button></div></div></div>`;
+            },
+            importCSV: () => {
+                const text = document.getElementById('csv-area').value; if(!text.trim()) return;
+                if (store.data.accounts.length === 0) return ui.showToast("Crea al menos una cuenta primero", "error");
+                let c = 0, defaultAcc = store.data.accounts[0].id;
+                text.trim().split('\n').forEach(line => {
+                    let p = line.split('\t'); if(p.length < 3) p = line.split(';'); if(p.length < 3) p = line.split(',');
+                    if (p.length >= 3) {
+                        let d = p[0].trim(), a = parseFloat(p[2].trim().replace(/\./g, '').replace(',', '.'));
+                        if(d.includes('/')) { let x = d.split('/'); d = `${x[2]}-${x[1].padStart(2,'0')}-${x[0].padStart(2,'0')}`; }
+                        if(isNaN(a)) a = parseFloat(p[2].trim().replace(',', '.'));
+                        if (!isNaN(a) && d.match(/^\d{4}-\d{2}-\d{2}$/)) { store.data.transactions.push({ id: generateId(), date: d, payee: p[1].trim(), categoryId: null, accountId: defaultAcc, amount: a, cleared: false }); c++; }
+                    }
+                });
+                if(c > 0) { store.save(); app.render(); ui.showToast(`${c} importadas`, "success"); }
+            }
+        };
+
+        // --- SUBMODULE: SETTINGS & CATEGORIES ---
+        const settingsApp = {
+            renderAdminSettings: () => {
+                let html = `
+                    <div class="max-w-4xl mx-auto space-y-6 pb-20">
+                        <div class="flex justify-between items-center">
+                            <div>
+                                <h2 class="text-lg font-bold text-gray-800">Estructura Presupuestaria</h2>
+                                <p class="text-sm text-gray-500">Configura los sobres y grupos YNAB.</p>
+                            </div>
+                            <button onclick="settingsApp.openGroupModal()" class="bg-gray-800 hover:bg-gray-900 text-white px-4 py-2 rounded-lg text-sm shadow-sm transition">
+                                <i class="fa-solid fa-folder-plus mr-2"></i>Nuevo Grupo
+                            </button>
+                        </div>
+                `;
+
+                if(store.data.categoryGroups.length === 0) {
+                    html += `<div class="bg-white rounded-xl border p-8 text-center text-gray-500 shadow-sm">Comienza creando un Grupo de Categorías (ej. "Gastos de Vivienda").</div>`;
+                }
+
+                store.data.categoryGroups.forEach(g => {
+                    const cats = store.data.categories.filter(c => c.groupId === g.id);
+                    html += `
+                        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                            <div class="bg-gray-50 px-5 py-3 border-b border-gray-200 flex justify-between items-center">
+                                <div class="flex items-center gap-3">
+                                    <h3 class="font-bold text-gray-800 uppercase text-sm tracking-wide">${g.name}</h3>
+                                    <button onclick="settingsApp.openGroupModal('${g.id}')" class="text-gray-400 hover:text-emerald-600" title="Editar Grupo"><i class="fa-solid fa-pen-to-square text-xs"></i></button>
+                                    <button onclick="settingsApp.deleteGroup('${g.id}')" class="text-gray-400 hover:text-red-600" title="Eliminar Grupo"><i class="fa-solid fa-trash text-xs"></i></button>
+                                </div>
+                                <button onclick="settingsApp.openCategoryModal(null, '${g.id}')" class="text-emerald-600 hover:text-emerald-700 text-sm font-medium"><i class="fa-solid fa-plus mr-1"></i> Categoría</button>
+                            </div>
+                            <div class="divide-y divide-gray-100">
+                    `;
+                    
+                    if (cats.length === 0) {
+                        html += `<div class="p-4 text-sm text-gray-400 italic">Grupo vacío. Añade una categoría.</div>`;
+                    }
+                    
+                    cats.forEach(c => {
+                        let badgeColor = c.type === 'variable' ? 'bg-blue-100 text-blue-700' : (c.type === 'fixed' ? 'bg-purple-100 text-purple-700' : 'bg-orange-100 text-orange-700');
+                        let typeName = c.type === 'variable' ? 'Variable (Absorbe)' : (c.type === 'fixed' ? 'Fijo (No absorbe)' : 'Acumulativo (Fondo)');
+                        html += `
+                            <div class="p-4 flex justify-between items-center hover:bg-gray-50 group transition-colors">
+                                <div>
+                                    <div class="font-medium text-gray-900">${c.name}</div>
+                                    <div class="flex gap-2 items-center mt-1">
+                                        <span class="text-[10px] px-2 py-0.5 rounded-full uppercase font-bold tracking-wider ${badgeColor}">${typeName}</span>
+                                        <span class="text-xs text-gray-500">Meta: ${formatCurrency(c.target)}</span>
+                                    </div>
+                                </div>
+                                <div class="opacity-0 group-hover:opacity-100 transition-opacity flex gap-3">
+                                    <button onclick="settingsApp.openCategoryModal('${c.id}')" class="text-gray-400 hover:text-gray-700"><i class="fa-solid fa-pen-to-square"></i></button>
+                                    <button onclick="settingsApp.deleteCategory('${c.id}')" class="text-red-300 hover:text-red-600"><i class="fa-solid fa-trash-can"></i></button>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    html += `</div></div>`;
+                });
+                document.getElementById('main-content').innerHTML = html + `</div>`;
+            },
+            
+            // GROUP MODAL
+            openGroupModal: (groupId = null) => {
+                const g = groupId ? store.data.categoryGroups.find(x => x.id === groupId) : { name: '' };
+                const isEdit = !!groupId;
+                
+                const body = `
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Nombre del Grupo</label>
+                    <input type="text" id="grp-name" value="${g.name}" placeholder="Ej. Transporte, Ocio..." class="w-full border-gray-300 rounded-lg shadow-sm p-2 border focus:ring-emerald-500 focus:border-emerald-500">
+                    <input type="hidden" id="grp-id" value="${groupId || ''}">
+                `;
+                const footer = `
+                    <button onclick="ui.closeModal()" class="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">Cancelar</button>
+                    <button onclick="settingsApp.saveGroup()" class="px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">Guardar</button>
+                `;
+                ui.showModal(isEdit ? 'Editar Grupo' : 'Nuevo Grupo', body, footer);
+            },
+            saveGroup: () => {
+                const id = document.getElementById('grp-id').value;
+                const name = document.getElementById('grp-name').value.trim();
+                if(!name) return ui.showToast("El nombre es obligatorio", "error");
+                
+                if (id) {
+                    store.data.categoryGroups.find(g => g.id === id).name = name;
+                } else {
+                    store.data.categoryGroups.push({ id: generateId(), name });
+                }
+                store.save(); ui.closeModal(); app.render(); ui.showToast("Grupo guardado", "success");
+            },
+            deleteGroup: (id) => {
+                const cats = store.data.categories.filter(c => c.groupId === id);
+                if (cats.length > 0) return ui.showToast("No puedes borrar un grupo con categorías dentro.", "error");
+                if(confirm("¿Eliminar este grupo vacío?")) {
+                    store.data.categoryGroups = store.data.categoryGroups.filter(g => g.id !== id);
+                    store.save(); app.render();
+                }
+            },
+
+            // CATEGORY MODAL
+            openCategoryModal: (catId = null, preselectGroupId = null) => {
+                const c = catId ? store.data.categories.find(x => x.id === catId) : { name: '', type: 'variable', target: 0, groupId: preselectGroupId };
+                const isEdit = !!catId;
+                
+                let groupOpts = '';
+                store.data.categoryGroups.forEach(g => {
+                    groupOpts += `<option value="${g.id}" ${c.groupId === g.id ? 'selected' : ''}>${g.name}</option>`;
+                });
+
+                const body = `
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
+                            <input type="text" id="cat-name" value="${c.name}" placeholder="Ej. Combustible, Restaurantes..." class="w-full border-gray-300 rounded-lg shadow-sm p-2 border">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Grupo</label>
+                            <select id="cat-group" class="w-full border-gray-300 rounded-lg shadow-sm p-2 border">${groupOpts}</select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Comportamiento (Tipo YNAB)</label>
+                            <select id="cat-type" class="w-full border-gray-300 rounded-lg shadow-sm p-2 border">
+                                <option value="variable" ${c.type === 'variable' ? 'selected' : ''}>Recurrente Variable (Needed for Spending: absorbe sobrante)</option>
+                                <option value="fixed" ${c.type === 'fixed' ? 'selected' : ''}>Recurrente Fijo (Exige cantidad exacta siempre)</option>
+                                <option value="accumulative" ${c.type === 'accumulative' ? 'selected' : ''}>Acumulativo (Sinking Fund: guarda sobrante)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Meta Mensual (€)</label>
+                            <input type="number" id="cat-target" step="0.01" value="${c.target}" placeholder="0.00" class="w-full border-gray-300 rounded-lg shadow-sm p-2 border">
+                            <p class="text-xs text-gray-400 mt-1">El importe que intentará asignar el botón "Auto-asignar".</p>
+                        </div>
+                        <input type="hidden" id="cat-id" value="${catId || ''}">
+                    </div>
+                `;
+                const footer = `
+                    <button onclick="ui.closeModal()" class="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">Cancelar</button>
+                    <button onclick="settingsApp.saveCategory()" class="px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">Guardar</button>
+                `;
+                ui.showModal(isEdit ? 'Editar Categoría' : 'Nueva Categoría', body, footer);
+            },
+            saveCategory: () => {
+                const id = document.getElementById('cat-id').value;
+                const name = document.getElementById('cat-name').value.trim();
+                const groupId = document.getElementById('cat-group').value;
+                const type = document.getElementById('cat-type').value;
+                let target = parseFloat(document.getElementById('cat-target').value);
+                
+                if(!name) return ui.showToast("El nombre es obligatorio", "error");
+                if(isNaN(target) || target < 0) target = 0;
+
+                if (id) {
+                    const cat = store.data.categories.find(c => c.id === id);
+                    cat.name = name; cat.groupId = groupId; cat.type = type; cat.target = target;
+                } else {
+                    store.data.categories.push({ id: generateId(), groupId, name, type, target });
+                }
+                store.save(); ui.closeModal(); app.render(); ui.showToast("Categoría guardada", "success");
+            },
+            deleteCategory: (id) => {
+                const hasTx = store.data.transactions.some(t => t.categoryId === id);
+                if (hasTx) return ui.showToast("Esta categoría tiene transacciones. No se puede borrar para evitar corromper la conciliación histórica.", "error");
+                
+                if(confirm("¿Seguro que quieres eliminar esta categoría permanentemente?")) {
+                    store.data.categories = store.data.categories.filter(c => c.id !== id);
+                    // Limpiar asignaciones previas
+                    Object.keys(store.data.allocations).forEach(m => { delete store.data.allocations[m][id]; });
+                    store.save(); app.render();
+                }
+            },
+
+            // ACCOUNT MODAL
+            openAccountModal: (accId = null) => {
+                const a = accId ? store.data.accounts.find(x => x.id === accId) : { name: '', type: 'checking' };
+                const isEdit = !!accId;
+                
+                const body = `
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Nombre de la Cuenta</label>
+                            <input type="text" id="acc-name" value="${a.name}" placeholder="Ej. BBVA Nómina, Efectivo en Casa..." class="w-full border-gray-300 rounded-lg shadow-sm p-2 border">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Tipo de Cuenta</label>
+                            <select id="acc-type" class="w-full border-gray-300 rounded-lg shadow-sm p-2 border">
+                                <option value="checking" ${a.type === 'checking' ? 'selected' : ''}>Corriente (Cheques / Nómina)</option>
+                                <option value="saving" ${a.type === 'saving' ? 'selected' : ''}>Ahorro (Hucha)</option>
+                                <option value="cash" ${a.type === 'cash' ? 'selected' : ''}>Efectivo (Bolsillo)</option>
+                            </select>
+                        </div>
+                        <input type="hidden" id="acc-id" value="${accId || ''}">
+                    </div>
+                `;
+                const footer = `
+                    <button onclick="ui.closeModal()" class="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">Cancelar</button>
+                    <button onclick="settingsApp.saveAccount()" class="px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700">Guardar</button>
+                `;
+                ui.showModal(isEdit ? 'Editar Cuenta' : 'Nueva Cuenta', body, footer);
+            },
+            saveAccount: () => {
+                const id = document.getElementById('acc-id').value;
+                const name = document.getElementById('acc-name').value.trim();
+                const type = document.getElementById('acc-type').value;
+                
+                if(!name) return ui.showToast("El nombre es obligatorio", "error");
+
+                if (id) {
+                    const acc = store.data.accounts.find(a => a.id === id);
+                    acc.name = name; acc.type = type;
+                } else {
+                    store.data.accounts.push({ id: generateId(), name, type });
+                }
+                store.save(); ui.closeModal(); app.render(); ui.showToast("Cuenta guardada", "success");
+            }
+        };
+
+        window.onload = async () => await app.init();
+    </script>
+</body>
+</html>
