@@ -122,6 +122,9 @@
                 return bytes.buffer;
             },
             deriveKey: async (password) => {
+                if (!window.crypto || !window.crypto.subtle) {
+                    throw new Error("Web Crypto API no soportada en este entorno.");
+                }
                 const enc = new TextEncoder();
                 const keyMaterial = await crypto.subtle.importKey("raw", enc.encode(password), { name: "PBKDF2" }, false, ["deriveKey"]);
                 const salt = enc.encode("ZeroBudget_Family_Salt_2026"); 
@@ -141,15 +144,13 @@
                 return cryptoEngine.ab2base64(payload.buffer);
             },
             decryptData: async (base64String, password) => {
-                try {
-                    const key = await cryptoEngine.deriveKey(password);
-                    const payloadBuffer = cryptoEngine.base642ab(base64String);
-                    const payload = new Uint8Array(payloadBuffer);
-                    const iv = payload.slice(0, 12);
-                    const encryptedContent = payload.slice(12);
-                    const decryptedBuffer = await crypto.subtle.decrypt({ name: "AES-GCM", iv: iv }, key, encryptedContent);
-                    return JSON.parse(new TextDecoder().decode(decryptedBuffer));
-                } catch (error) { throw new Error("Clave incorrecta o datos corruptos"); }
+                const key = await cryptoEngine.deriveKey(password);
+                const payloadBuffer = cryptoEngine.base642ab(base64String);
+                const payload = new Uint8Array(payloadBuffer);
+                const iv = payload.slice(0, 12);
+                const encryptedContent = payload.slice(12);
+                const decryptedBuffer = await crypto.subtle.decrypt({ name: "AES-GCM", iv: iv }, key, encryptedContent);
+                return JSON.parse(new TextDecoder().decode(decryptedBuffer));
             }
         };
 
@@ -168,26 +169,23 @@
                         </div>
                     `;
                     const footer = `
-                        <button onclick="
-                            const p = document.getElementById('crypto-pin').value;
-                            if(p) { ui.closeModal(); APP_PIN = p; resolve(p); }
-                            else { ui.showToast('El PIN no puede estar vacío', 'error'); }
-                        " class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-lg transition">Desbloquear</button>
+                        <button id="unlock-btn" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-lg transition">Desbloquear</button>
                     `;
                     
                     ui.showModal('Bóveda Familiar', body, footer);
                     
-                    // Foco automático y soporte para tecla Enter
                     setTimeout(() => {
                         const input = document.getElementById('crypto-pin');
-                        if(input) {
+                        const btn = document.getElementById('unlock-btn');
+                        const handleUnlock = () => {
+                            const p = input.value;
+                            if(p) { ui.closeModal(); APP_PIN = p; resolve(p); }
+                            else { ui.showToast('El PIN no puede estar vacío', 'error'); }
+                        };
+                        if(input && btn) {
                             input.focus();
-                            input.addEventListener('keypress', (e) => {
-                                if (e.key === 'Enter') {
-                                    const p = input.value;
-                                    if(p) { ui.closeModal(); APP_PIN = p; resolve(p); }
-                                }
-                            });
+                            btn.onclick = handleUnlock;
+                            input.addEventListener('keypress', (e) => { if (e.key === 'Enter') handleUnlock(); });
                         }
                     }, 100);
                 });
@@ -201,20 +199,21 @@
                         try { 
                             store.data = await cryptoEngine.decryptData(localEncrypted, pin);
                             app.render(); 
+                            return;
                         } catch(e) { 
-                            ui.showToast("Caché local ilegible (PIN erróneo). Recarga la página.", "error"); 
-                            APP_PIN = null; return;
+                            console.warn("Fallo descifrado local, intentando nube:", e);
+                            localStorage.removeItem('zenbudget_data_enc');
                         }
                     }
 
                     if(GAS_URL === 'PEGA_AQUI_LA_URL_DEL_WEBAPP_DE_GAS') {
-                        console.warn("Modo 100% offline.");
-                        if (!store.data) { store.data = store.generateMockData(); await store.save(); app.render(); }
+                        store.data = store.generateMockData();
+                        await store.save(); 
+                        app.render();
                         return;
                     }
 
                     ui.showToast("Sincronizando nube...", "info");
-                    
                     const response = await fetch(GAS_URL);
                     const serverJsonResponse = await response.json(); 
                     const encryptedPayloadBase64 = serverJsonResponse.payload;
@@ -226,22 +225,24 @@
                             localStorage.setItem('zenbudget_data_enc', newEncrypted);
                             app.render();
                             ui.showToast("Sincronización completa", "success");
+                            return;
                         } catch(e) {
-                            ui.showToast("Fallo al descifrar nube. ¿PIN incorrecto?", "error");
+                            ui.showToast("PIN incorrecto o datos de nube ilegibles", "error");
                             APP_PIN = null;
+                            location.reload();
+                            return;
                         }
-                    } else if (!store.data) {
-                        store.data = store.generateMockData();
-                        await store.save(); 
-                        app.render();
                     }
-                } catch(e) { 
-                    console.error("Error en init (Fallo de red o CORS):", e);
-                    if (!store.data) {
-                        store.data = store.generateMockData();
-                    }
+                    
+                    store.data = store.generateMockData();
+                    await store.save(); 
                     app.render();
-                    ui.showToast("Operando en local (Conexión fallida)", "error");
+
+                } catch(e) { 
+                    console.error("Error crítico en init:", e);
+                    store.data = store.generateMockData();
+                    app.render();
+                    ui.showToast("Modo de emergencia activado", "error");
                 }
             },
             save: async () => {
@@ -707,7 +708,6 @@
                 
                 if(confirm("¿Seguro que quieres eliminar esta categoría permanentemente?")) {
                     store.data.categories = store.data.categories.filter(c => c.id !== id);
-                    // Limpiar asignaciones previas
                     Object.keys(store.data.allocations).forEach(m => { delete store.data.allocations[m][id]; });
                     store.save(); app.render();
                 }
