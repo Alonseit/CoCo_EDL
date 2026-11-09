@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CoCo EDL - Finanzas Familiares</title>
+    <title>ZeroBudget - Finanzas Familiares</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -32,7 +32,7 @@
                     <i class="fa-solid fa-wallet"></i>
                 </div>
                 <h1 class="text-xl font-bold tracking-tight text-gray-900 hidden sm:block">
-                    ZeroBudget <span class="text-xs font-medium text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full ml-1 align-middle">v0.1.13</span>
+                    ZeroBudget <span class="text-xs font-medium text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full ml-1 align-middle">v0.1.14</span>
                 </h1>
             </div>
             
@@ -362,22 +362,21 @@
                 store.data.categories.forEach(c => { const avail = engine.getCategoryAvailable(c.id, month); if (avail > 0) catAvailable += avail; });
                 return cash + expected - catAvailable;
             },
-            // NUEVA FUNCIÓN: Calcula la aportación necesaria este mes para cumplir un objetivo con fecha
             getMonthlyTarget: (c, currentMonth) => {
-                if (!c.targetDate) return c.target || 0;
+                if (!c.targetDate || typeof c.targetDate !== 'string') return c.target || 0;
+                if (!c.targetDate.includes('-')) return c.target || 0; 
                 
                 const targetM = c.targetDate; // YYYY-MM
                 let p1 = currentMonth.split('-'), p2 = targetM.split('-');
-                let monthsDiff = (parseInt(p2[0]) - parseInt(p1[0])) * 12 + (parseInt(p2[1]) - parseInt(p1[1])) + 1; // +1 to include current month
+                let monthsDiff = (parseInt(p2[0]) - parseInt(p1[0])) * 12 + (parseInt(p2[1]) - parseInt(p1[1])) + 1;
                 
-                // Calcular cuánto tenemos disponible ANTES de este mes
                 let prevD = new Date(p1[0], p1[1]-2, 1);
                 let prevMonthStr = getMonthString(prevD);
                 let availableSoFar = engine.getCategoryAvailable(c.id, prevMonthStr);
                 
                 let remainingAmount = c.target - availableSoFar;
-                if (remainingAmount <= 0) return 0; // Objetivo ya alcanzado
-                if (monthsDiff <= 0) return remainingAmount; // Objetivo vence este mes o está vencido
+                if (remainingAmount <= 0) return 0;
+                if (monthsDiff <= 0) return remainingAmount; 
                 
                 return remainingAmount / monthsDiff;
             },
@@ -412,12 +411,10 @@
                     const assigned = store.data.allocations[month][c.id] || 0;
                     let toAssign = 0;
                     
-                    if (c.targetDate) {
-                        // Es un objetivo con fecha, asignar lo exacto que requiere este mes
+                    if (c.targetDate && typeof c.targetDate === 'string' && c.targetDate.includes('-')) {
                         let monthlyReq = engine.getMonthlyTarget(c, month);
                         toAssign = Math.max(0, monthlyReq - assigned);
                     } else {
-                        // Lógica recurrente normal
                         toAssign = c.type === 'variable' 
                             ? Math.max(0, c.target - Math.max(0, engine.getCategoryAvailable(c.id, prevMonth))) - assigned 
                             : (c.target || 0) - assigned;
@@ -441,7 +438,7 @@
             initPostData: () => {
                 if (store.data) {
                     if(!store.data.expectedIncome) store.data.expectedIncome = {};
-                    // Adaptación retroactiva por si hay categorías sin targetDate property
+                    // Adaptación retroactiva
                     store.data.categories.forEach(c => {
                         if (c.targetDate === undefined) c.targetDate = null;
                     });
@@ -535,9 +532,8 @@
                         
                         const textDisplay = `${Math.round(spent)} / ${Math.round(totalFunding)}`;
                         
-                        // Adaptar subtítulo en Visor si es un objetivo
                         let subtitleText = `Meta: ${formatCurrency(c.target || 0)}`;
-                        if (c.targetDate) {
+                        if (c.targetDate && typeof c.targetDate === 'string' && c.targetDate.includes('-')) {
                             let [ty, tm] = c.targetDate.split('-');
                             subtitleText = `Objetivo: ${formatCurrency(c.target)} (${tm}/${ty})`;
                         }
@@ -625,9 +621,8 @@
                         const act = engine.getActivity(c.id, month);
                         const disp = engine.getCategoryAvailable(c.id, month);
                         
-                        // Lógica visual del objetivo
                         let metaText = `Meta: ${formatCurrency(c.target)}`;
-                        if (c.targetDate) {
+                        if (c.targetDate && typeof c.targetDate === 'string' && c.targetDate.includes('-')) {
                             let [ty, tm] = c.targetDate.split('-');
                             let monthlyReq = engine.getMonthlyTarget(c, month);
                             if (monthlyReq === 0 && (c.target - engine.getCategoryAvailable(c.id, getMonthString(new Date(month.split('-')[0], month.split('-')[1]-2, 1)))) <= 0) ) {
@@ -948,7 +943,7 @@
                 let target = parseFloat(document.getElementById('cat-target').value);
                 
                 const isGoal = document.getElementById('cat-is-goal').value === 'true';
-                const type = isGoal ? 'accumulative' : document.getElementById('cat-type').value; // Los objetivos por fecha actúan estructuralmente como acumulativos
+                const type = isGoal ? 'accumulative' : document.getElementById('cat-type').value; 
                 
                 let targetDate = null;
                 if (isGoal) {
