@@ -1,4 +1,4 @@
-const CACHE_NAME = 'zerobudget-v0.1.8';
+const CACHE_NAME = 'zerobudget-v0.1.9';
 
 // Archivos estáticos a cachear para modo offline
 const ASSETS_TO_CACHE = [
@@ -15,7 +15,7 @@ self.addEventListener('install', (event) => {
       return cache.addAll(ASSETS_TO_CACHE);
     })
   );
-  self.skipWaiting(); // Fuerza la activación inmediata de la nueva versión
+  self.skipWaiting(); // Fuerza la instalación inmediata
 });
 
 self.addEventListener('activate', (event) => {
@@ -23,7 +23,6 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames.map((cache) => {
-          // Elimina cachés antiguas si cambias el CACHE_NAME
           if (cache !== CACHE_NAME) {
             return caches.delete(cache);
           }
@@ -31,19 +30,28 @@ self.addEventListener('activate', (event) => {
       );
     })
   );
-  self.clients.claim();
+  self.clients.claim(); // Toma el control de los clientes abiertos sin necesidad de recargar
 });
 
 self.addEventListener('fetch', (event) => {
-  // Ignorar peticiones a Google Apps Script (siempre deben ir por red, nunca por caché)
-  if (event.request.url.includes('script.google.com')) {
+  // Ignorar peticiones a Google Apps Script o peticiones que no sean GET
+  if (event.request.url.includes('script.google.com') || event.request.method !== 'GET') {
     return;
   }
   
-  // Estrategia Cache-First para la PWA
+  // Estrategia Network-First: Intenta ir a la red, si falla (offline), devuelve la caché
   event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      return cachedResponse || fetch(event.request);
-    })
+    fetch(event.request)
+      .then((networkResponse) => {
+        // Actualiza la caché silenciosamente con la nueva versión descargada
+        return caches.open(CACHE_NAME).then((cache) => {
+          cache.put(event.request, networkResponse.clone());
+          return networkResponse;
+        });
+      })
+      .catch(() => {
+        // Fallo de red (offline), intenta recuperar de la caché
+        return caches.match(event.request);
+      })
   );
 });
