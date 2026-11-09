@@ -1,4 +1,4 @@
-const CACHE_NAME = 'zerobudget-v0.1.12';
+const CACHE_NAME = 'zerobudget-v0.1.13';
 
 // Archivos estáticos a cachear para modo offline
 const ASSETS_TO_CACHE = [
