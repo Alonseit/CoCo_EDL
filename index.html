@@ -30,7 +30,7 @@
                     <i class="fa-solid fa-wallet"></i>
                 </div>
                 <h1 class="text-xl font-bold tracking-tight text-gray-900 hidden sm:block">
-                    ZeroBudget <span class="text-xs font-medium text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full ml-1 align-middle">v0.1.8</span>
+                    ZeroBudget <span class="text-xs font-medium text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full ml-1 align-middle">v0.1.9</span>
                 </h1>
             </div>
             
@@ -271,7 +271,7 @@
                         store.data = parsed;
                         store.save(); 
                         ui.showToast("Base de datos importada y cifrada", "success");
-                        app.initPostData(); // Re-inicializar propiedades faltantes tras importar
+                        app.initPostData(); 
                         app.render();
                     } else throw new Error("Inválido");
                 } catch(e) { ui.showToast("Error importando", "error"); }
@@ -810,13 +810,33 @@
 
         window.onload = async () => await app.init();
     </script>
-<!-- Registro del Service Worker -->
+<!-- Registro del Service Worker y actualización automática -->
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register('./service-worker.js')
-                    .then(reg => console.log('Service Worker registrado con éxito.', reg.scope))
+                    .then(reg => {
+                        console.log('Service Worker registrado con éxito.', reg.scope);
+                        // Escucha si hay una nueva versión instalándose
+                        reg.addEventListener('updatefound', () => {
+                            const newWorker = reg.installing;
+                            newWorker.addEventListener('statechange', () => {
+                                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                                    console.log('Nueva versión disponible. Se forzará actualización al cambiar el controlador.');
+                                }
+                            });
+                        });
+                    })
                     .catch(err => console.error('Fallo al registrar el Service Worker:', err));
+            });
+
+            // Forzar refresco de la página si un nuevo service worker toma el control.
+            // Esto asegura que la PWA y la web carguen el nuevo index.html tras actualizar.
+            let refreshing;
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+                if (refreshing) return;
+                window.location.reload();
+                refreshing = true;
             });
         }
     </script>
