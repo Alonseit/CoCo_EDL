@@ -15,7 +15,7 @@
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         
-        /* Fix: Comportamiento físico del toggle */
+        /* Comportamiento físico del toggle */
         .toggle-checkbox:checked { transform: translateX(100%); border-color: #10B981; }
         .toggle-checkbox:checked + .toggle-label { background-color: #10B981; }
         .toggle-checkbox { left: 0; z-index: 1; border-color: #e5e7eb; transition: transform 0.3s ease-in-out, border-color 0.3s ease-in-out; }
@@ -32,7 +32,7 @@
                     <i class="fa-solid fa-wallet"></i>
                 </div>
                 <h1 class="text-xl font-bold tracking-tight text-gray-900 hidden sm:block">
-                    ZeroBudget <span class="text-xs font-medium text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full ml-1 align-middle">v0.1.10</span>
+                    ZeroBudget <span class="text-xs font-medium text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full ml-1 align-middle">v0.1.11</span>
                 </h1>
             </div>
             
@@ -43,7 +43,7 @@
             </div>
 
             <div class="flex items-center gap-2 sm:gap-4">
-                <!-- Botón de Sincronización Manual (Visible en ambos modos, pero vital para el Visor) -->
+                <!-- Botón de Sincronización Manual -->
                 <button onclick="store.syncCloud(false)" id="btn-force-sync" class="p-2 text-emerald-600 hover:bg-emerald-50 rounded-full transition-colors flex items-center justify-center w-10 h-10" title="Forzar Sincronización con la Nube">
                     <i class="fa-solid fa-cloud-arrow-down text-lg"></i>
                 </button>
@@ -207,10 +207,8 @@
                     if (localEncrypted) {
                         try { 
                             store.data = await cryptoEngine.decryptData(localEncrypted, pin);
-                            // Cargamos rápido desde local
                             app.initPostData();
                             app.render();
-                            // Hacemos pull en background para asegurar la última versión de la nube
                             store.syncCloud(true, pin);
                             return;
                         } catch(e) { 
@@ -225,7 +223,6 @@
                         return;
                     }
 
-                    // Si no hay datos locales, forzamos pull
                     await store.syncCloud(false, pin);
 
                 } catch(e) { 
@@ -291,14 +288,13 @@
                         const syncIcon = document.querySelector('#btn-force-sync i');
                         if (syncIcon) syncIcon.className = 'fa-solid fa-arrows-rotate fa-spin text-gray-400 text-lg';
                         
-                        // Push a la nube
                         fetch(GAS_URL, {
                             method: 'POST',
                             body: encryptedPayloadBase64,
                             headers: { 'Content-Type': 'text/plain;charset=utf-8' }
                         }).then(r => {
                             if (syncIcon) {
-                                syncIcon.className = 'fa-solid fa-cloud text-emerald-600 text-lg'; // Sincronizado
+                                syncIcon.className = 'fa-solid fa-cloud text-emerald-600 text-lg'; 
                                 setTimeout(() => { syncIcon.className = 'fa-solid fa-cloud-arrow-down text-emerald-600 text-lg'; }, 2000);
                             }
                         }).catch(e => {
@@ -568,7 +564,15 @@
                 store.data.categories.forEach(c => catOpts += `<option value="${c.id}">${c.name}</option>`);
                 store.data.accounts.forEach(a => accOpts += `<option value="${a.id}">${a.name}</option>`);
                 
-                let html = `<div class="max-w-6xl mx-auto space-y-6 pb-20"><div class="bg-white rounded-xl shadow-sm border p-5"><div class="grid grid-cols-1 md:grid-cols-6 gap-4 items-end"><div><label class="block text-xs text-gray-500 mb-1">Fecha</label><input type="date" id="tx-date" value="${new Date().toISOString().split('T')[0]}" class="w-full border p-2 rounded-lg text-sm"></div><div class="md:col-span-2"><label class="block text-xs text-gray-500 mb-1">Concepto</label><input type="text" id="tx-payee" class="w-full border p-2 rounded-lg text-sm"></div><div><label class="block text-xs text-gray-500 mb-1">Categoría</label><select id="tx-cat" class="w-full border p-2 rounded-lg text-sm">${catOpts}</select></div><div><label class="block text-xs text-gray-500 mb-1">Cuenta</label><select id="tx-acc" class="w-full border p-2 rounded-lg text-sm">${accOpts}</select></div><div><label class="block text-xs text-gray-500 mb-1">Importe</label><div class="flex gap-2"><input type="number" id="tx-amount" step="0.01" class="w-full border p-2 rounded-lg text-sm"><button onclick="app.addTx()" class="bg-emerald-600 text-white rounded-lg px-4 py-2"><i class="fa-solid fa-plus"></i></button></div></div></div></div><div class="bg-white rounded-xl shadow-sm border overflow-x-auto"><table class="w-full text-left"><thead class="bg-gray-50 border-b text-xs uppercase text-gray-500"><th class="p-4 w-12"><i class="fa-solid fa-check-double"></i></th><th class="p-4">Fecha</th><th class="p-4">Beneficiario</th><th class="p-4 text-right">Importe</th><th class="p-4 w-12"></th></thead><tbody class="divide-y divide-gray-100 text-sm">`;
+                // Fecha por defecto: si el mes visualizado no es el actual, usar el día 1 de ese mes.
+                const today = new Date();
+                const currentM = store.data.settings.currentMonth;
+                let defaultDate = today.toISOString().split('T')[0];
+                if (currentM !== getMonthString(today)) {
+                    defaultDate = `${currentM}-01`;
+                }
+
+                let html = `<div class="max-w-6xl mx-auto space-y-6 pb-20"><div class="bg-white rounded-xl shadow-sm border p-5"><div class="grid grid-cols-1 md:grid-cols-6 gap-4 items-end"><div><label class="block text-xs text-gray-500 mb-1">Fecha</label><input type="date" id="tx-date" value="${defaultDate}" class="w-full border p-2 rounded-lg text-sm"></div><div class="md:col-span-2"><label class="block text-xs text-gray-500 mb-1">Concepto</label><input type="text" id="tx-payee" class="w-full border p-2 rounded-lg text-sm"></div><div><label class="block text-xs text-gray-500 mb-1">Categoría</label><select id="tx-cat" class="w-full border p-2 rounded-lg text-sm">${catOpts}</select></div><div><label class="block text-xs text-gray-500 mb-1">Cuenta</label><select id="tx-acc" class="w-full border p-2 rounded-lg text-sm">${accOpts}</select></div><div><label class="block text-xs text-gray-500 mb-1">Importe</label><div class="flex gap-2"><input type="number" id="tx-amount" step="0.01" class="w-full border p-2 rounded-lg text-sm"><button onclick="app.addTx()" class="bg-emerald-600 text-white rounded-lg px-4 py-2"><i class="fa-solid fa-plus"></i></button></div></div></div></div><div class="bg-white rounded-xl shadow-sm border overflow-x-auto"><table class="w-full text-left"><thead class="bg-gray-50 border-b text-xs uppercase text-gray-500"><th class="p-4 w-12"><i class="fa-solid fa-check-double"></i></th><th class="p-4">Fecha</th><th class="p-4">Beneficiario</th><th class="p-4 text-right">Importe</th><th class="p-4 w-12"></th></thead><tbody class="divide-y divide-gray-100 text-sm">`;
                 
                 if(store.data.accounts.length === 0) {
                     html += `<tr><td colspan="5" class="p-8 text-center text-gray-500">Crea una cuenta en 'Cuentas' antes de añadir transacciones.</td></tr>`;
@@ -581,7 +585,15 @@
                 const date = document.getElementById('tx-date').value, payee = document.getElementById('tx-payee').value, amount = parseFloat(document.getElementById('tx-amount').value), acc = document.getElementById('tx-acc').value;
                 if(!date || !payee || isNaN(amount) || !acc) return ui.showToast("Rellena todos los campos (se requiere cuenta)", "error");
                 store.data.transactions.push({ id: generateId(), date, payee, categoryId: document.getElementById('tx-cat').value || null, accountId: acc, amount, cleared: false });
-                store.save(); app.render(); ui.showToast("Añadida", "success");
+                
+                const txMonth = date.substring(0, 7);
+                if (store.data.settings.currentMonth !== txMonth) {
+                    store.data.settings.currentMonth = txMonth;
+                    ui.showToast(`Añadida. Vista cambiada a ${txMonth}`, "success");
+                } else {
+                    ui.showToast("Añadida", "success");
+                }
+                store.save(); app.render();
             },
             delTx: (id) => { store.data.transactions = store.data.transactions.filter(t => t.id !== id); store.save(); app.render(); },
             toggleTx: (id, c) => { const t = store.data.transactions.find(x => x.id === id); if(t) { t.cleared = c; if(c) store.data.settings.lastReconciled = new Date().toISOString().split('T')[0]; store.save(); } },
