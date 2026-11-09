@@ -32,7 +32,7 @@
                     <i class="fa-solid fa-wallet"></i>
                 </div>
                 <h1 class="text-xl font-bold tracking-tight text-gray-900 hidden sm:block">
-                    ZeroBudget <span class="text-xs font-medium text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full ml-1 align-middle">v0.1.11</span>
+                    ZeroBudget <span class="text-xs font-medium text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full ml-1 align-middle">v0.1.12</span>
                 </h1>
             </div>
             
@@ -76,7 +76,7 @@
 
     <!-- Modal Root -->
     <div id="modal-overlay" class="hidden fixed inset-0 bg-gray-900 bg-opacity-50 z-50 flex items-center justify-center p-4 backdrop-blur-sm transition-opacity">
-        <div id="modal-content" class="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden transform transition-all scale-100 max-h-[90vh] overflow-y-auto"></div>
+        <div id="modal-content" class="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden transform transition-all scale-100 max-h-[90vh] overflow-y-auto flex flex-col"></div>
     </div>
 
     <!-- Toast Notification Container -->
@@ -113,7 +113,7 @@
             },
             showModal: (title, bodyHtml, footerHtml = '') => {
                 const content = document.getElementById('modal-content');
-                content.innerHTML = `<div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50 sticky top-0 z-10"><h3 class="text-lg font-semibold text-gray-800">${title}</h3><button onclick="ui.closeModal()" class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark text-xl"></i></button></div><div class="p-6">${bodyHtml}</div>${footerHtml ? `<div class="px-6 py-4 border-t border-gray-100 bg-gray-50 flex justify-end gap-3 sticky bottom-0">${footerHtml}</div>` : ''}`;
+                content.innerHTML = `<div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50 sticky top-0 z-10 shrink-0"><h3 class="text-lg font-semibold text-gray-800">${title}</h3><button onclick="ui.closeModal()" class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark text-xl"></i></button></div><div class="p-6 flex-1 overflow-y-auto">${bodyHtml}</div>${footerHtml ? `<div class="px-6 py-4 border-t border-gray-100 bg-gray-50 flex justify-end items-center gap-3 sticky bottom-0 shrink-0">${footerHtml}</div>` : ''}`;
                 document.getElementById('modal-overlay').classList.remove('hidden');
             },
             closeModal: () => document.getElementById('modal-overlay').classList.add('hidden')
@@ -420,6 +420,41 @@
             setTab: (tabId) => { store.data.settings.activeTab = tabId; store.save(); app.render(); },
             prevMonth: () => { let p = store.data.settings.currentMonth.split('-'); store.data.settings.currentMonth = getMonthString(new Date(p[0], p[1] - 2, 1)); store.save(); app.render(); },
             nextMonth: () => { let p = store.data.settings.currentMonth.split('-'); store.data.settings.currentMonth = getMonthString(new Date(p[0], p[1], 1)); store.save(); app.render(); },
+            
+            // --- NUEVO: MODAL DE MOVIMIENTOS POR CUENTA EN VISOR ---
+            viewAccountTxs: (accountId) => {
+                const acc = store.data.accounts.find(a => a.id === accountId);
+                if (!acc) return;
+                
+                const txs = store.data.transactions.filter(t => t.accountId === accountId).sort((a, b) => b.date.localeCompare(a.date));
+                
+                let body = `<div class="space-y-3">`;
+                if (txs.length === 0) {
+                    body += `<div class="text-center text-gray-500 py-4 text-sm">No hay movimientos registrados en esta cuenta.</div>`;
+                } else {
+                    txs.forEach(t => {
+                        body += `
+                        <div class="flex justify-between items-center border-b border-gray-100 pb-3 last:border-0 last:pb-0">
+                            <div>
+                                <div class="font-medium text-gray-800 text-sm">${t.payee}</div>
+                                <div class="text-xs text-gray-400">${formatDate(t.date)}</div>
+                            </div>
+                            <div class="font-bold text-sm ${t.amount > 0 ? 'text-emerald-600' : 'text-gray-900'}">
+                                ${formatCurrency(t.amount)}
+                            </div>
+                        </div>`;
+                    });
+                }
+                body += `</div>`;
+                
+                const bal = txs.reduce((s, t) => s + t.amount, 0);
+                
+                ui.showModal(`Movimientos: ${acc.name}`, body, `
+                    <div class="flex-1 text-left"><span class="text-xs text-gray-500 uppercase">Saldo Total:</span> <span class="font-bold ml-1 ${bal < 0 && acc.type === 'credit' ? 'text-red-600' : ''} text-lg">${formatCurrency(bal)}</span></div>
+                    <button onclick="ui.closeModal()" class="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200">Cerrar</button>
+                `);
+            },
+            
             render: () => {
                 if(!store.data) return;
                 const isAdmin = store.data.settings.isAdmin;
@@ -445,6 +480,7 @@
                     app.renderViewer();
                 }
             },
+            
             // --- VIEWER MODE ---
             renderViewer: () => {
                 const month = store.data.settings.currentMonth;
@@ -486,8 +522,32 @@
                     });
                     html += `</div></div>`;
                 });
+                
+                // SECCIÓN CUENTAS EN MODO VISOR
+                if (store.data.accounts.length > 0) {
+                    html += `<div class="mt-8 mb-4 flex items-center justify-between"><h2 class="text-sm font-bold text-gray-700 uppercase tracking-wide">Cuentas y Saldos</h2></div>`;
+                    html += `<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">`;
+                    
+                    store.data.accounts.forEach(a => {
+                        const b = store.data.transactions.filter(t => t.accountId === a.id).reduce((s, t) => s + t.amount, 0); 
+                        html += `
+                        <div onclick="app.viewAccountTxs('${a.id}')" class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 flex justify-between items-center cursor-pointer hover:border-emerald-300 transition-colors">
+                            <div>
+                                <div class="font-medium text-gray-800">${a.name}</div>
+                                <div class="text-xs text-gray-400 capitalize">${a.type === 'credit' ? 'Tarjeta de Crédito' : (a.type === 'checking' ? 'Corriente' : (a.type === 'saving' ? 'Ahorro' : 'Efectivo'))}</div>
+                            </div>
+                            <div class="text-right flex flex-col items-end">
+                                <span class="font-bold text-lg ${b < 0 && a.type === 'credit' ? 'text-red-600' : 'text-gray-900'}">${formatCurrency(b)}</span>
+                                <span class="text-[10px] text-emerald-600 mt-1 flex items-center gap-1">Ver mvtos <i class="fa-solid fa-arrow-right"></i></span>
+                            </div>
+                        </div>`;
+                    });
+                    html += `</div>`;
+                }
+                
                 document.getElementById('main-content').innerHTML = html + `</div>`;
             },
+            
             // --- ADMIN BUDGET ---
             renderAdminBudget: () => {
                 const month = store.data.settings.currentMonth;
@@ -557,6 +617,7 @@
                 store.data.allocations[month][targetId] = (store.data.allocations[month][targetId] || 0) + amt;
                 store.save(); ui.closeModal(); app.render(); ui.showToast("Transferido", "success");
             },
+            
             // --- ADMIN TRANSACTIONS ---
             renderAdminTransactions: () => {
                 const txs = [...store.data.transactions].sort((a, b) => b.date.localeCompare(a.date));
@@ -564,7 +625,6 @@
                 store.data.categories.forEach(c => catOpts += `<option value="${c.id}">${c.name}</option>`);
                 store.data.accounts.forEach(a => accOpts += `<option value="${a.id}">${a.name}</option>`);
                 
-                // Fecha por defecto: si el mes visualizado no es el actual, usar el día 1 de ese mes.
                 const today = new Date();
                 const currentM = store.data.settings.currentMonth;
                 let defaultDate = today.toISOString().split('T')[0];
@@ -572,12 +632,26 @@
                     defaultDate = `${currentM}-01`;
                 }
 
-                let html = `<div class="max-w-6xl mx-auto space-y-6 pb-20"><div class="bg-white rounded-xl shadow-sm border p-5"><div class="grid grid-cols-1 md:grid-cols-6 gap-4 items-end"><div><label class="block text-xs text-gray-500 mb-1">Fecha</label><input type="date" id="tx-date" value="${defaultDate}" class="w-full border p-2 rounded-lg text-sm"></div><div class="md:col-span-2"><label class="block text-xs text-gray-500 mb-1">Concepto</label><input type="text" id="tx-payee" class="w-full border p-2 rounded-lg text-sm"></div><div><label class="block text-xs text-gray-500 mb-1">Categoría</label><select id="tx-cat" class="w-full border p-2 rounded-lg text-sm">${catOpts}</select></div><div><label class="block text-xs text-gray-500 mb-1">Cuenta</label><select id="tx-acc" class="w-full border p-2 rounded-lg text-sm">${accOpts}</select></div><div><label class="block text-xs text-gray-500 mb-1">Importe</label><div class="flex gap-2"><input type="number" id="tx-amount" step="0.01" class="w-full border p-2 rounded-lg text-sm"><button onclick="app.addTx()" class="bg-emerald-600 text-white rounded-lg px-4 py-2"><i class="fa-solid fa-plus"></i></button></div></div></div></div><div class="bg-white rounded-xl shadow-sm border overflow-x-auto"><table class="w-full text-left"><thead class="bg-gray-50 border-b text-xs uppercase text-gray-500"><th class="p-4 w-12"><i class="fa-solid fa-check-double"></i></th><th class="p-4">Fecha</th><th class="p-4">Beneficiario</th><th class="p-4 text-right">Importe</th><th class="p-4 w-12"></th></thead><tbody class="divide-y divide-gray-100 text-sm">`;
+                let html = `<div class="max-w-6xl mx-auto space-y-6 pb-20"><div class="bg-white rounded-xl shadow-sm border p-5"><div class="grid grid-cols-1 md:grid-cols-6 gap-4 items-end"><div><label class="block text-xs text-gray-500 mb-1">Fecha</label><input type="date" id="tx-date" value="${defaultDate}" class="w-full border p-2 rounded-lg text-sm"></div><div class="md:col-span-2"><label class="block text-xs text-gray-500 mb-1">Concepto</label><input type="text" id="tx-payee" class="w-full border p-2 rounded-lg text-sm"></div><div><label class="block text-xs text-gray-500 mb-1">Categoría</label><select id="tx-cat" class="w-full border p-2 rounded-lg text-sm">${catOpts}</select></div><div><label class="block text-xs text-gray-500 mb-1">Cuenta</label><select id="tx-acc" class="w-full border p-2 rounded-lg text-sm">${accOpts}</select></div><div><label class="block text-xs text-gray-500 mb-1">Importe</label><div class="flex gap-2"><input type="number" id="tx-amount" step="0.01" class="w-full border p-2 rounded-lg text-sm"><button onclick="app.addTx()" class="bg-emerald-600 text-white rounded-lg px-4 py-2"><i class="fa-solid fa-plus"></i></button></div></div></div></div><div class="bg-white rounded-xl shadow-sm border overflow-x-auto"><table class="w-full text-left"><thead class="bg-gray-50 border-b text-xs uppercase text-gray-500"><th class="p-4 w-12"><i class="fa-solid fa-check-double"></i></th><th class="p-4">Fecha</th><th class="p-4">Beneficiario / Cuenta</th><th class="p-4 hidden md:table-cell">Cuenta</th><th class="p-4 text-right">Importe</th><th class="p-4 w-12"></th></thead><tbody class="divide-y divide-gray-100 text-sm">`;
                 
                 if(store.data.accounts.length === 0) {
-                    html += `<tr><td colspan="5" class="p-8 text-center text-gray-500">Crea una cuenta en 'Cuentas' antes de añadir transacciones.</td></tr>`;
+                    html += `<tr><td colspan="6" class="p-8 text-center text-gray-500">Crea una cuenta en 'Cuentas' antes de añadir transacciones.</td></tr>`;
                 } else {
-                    txs.forEach(t => { html += `<tr class="hover:bg-gray-50"><td class="p-4 text-center"><input type="checkbox" ${t.cleared ? 'checked' : ''} onchange="app.toggleTx('${t.id}', this.checked)" class="text-emerald-600"></td><td class="p-4 text-gray-500">${formatDate(t.date)}</td><td class="p-4 font-medium">${t.payee}</td><td class="p-4 text-right ${t.amount > 0 ? 'text-emerald-600 font-medium' : 'text-gray-900'}">${formatCurrency(t.amount)}</td><td class="p-4 text-center"><button onclick="app.delTx('${t.id}')" class="text-red-400 hover:text-red-600"><i class="fa-solid fa-trash-can"></i></button></td></tr>`; });
+                    txs.forEach(t => { 
+                        const acc = store.data.accounts.find(a => a.id === t.accountId);
+                        const accName = acc ? acc.name : 'Desconocida';
+                        html += `<tr class="hover:bg-gray-50">
+                            <td class="p-4 text-center"><input type="checkbox" ${t.cleared ? 'checked' : ''} onchange="app.toggleTx('${t.id}', this.checked)" class="text-emerald-600"></td>
+                            <td class="p-4 text-gray-500">${formatDate(t.date)}</td>
+                            <td class="p-4 font-medium">
+                                ${t.payee}
+                                <div class="text-[10px] text-gray-400 md:hidden mt-0.5" title="Cuenta origen"><i class="fa-solid fa-wallet text-gray-300 mr-1"></i>${accName}</div>
+                            </td>
+                            <td class="p-4 text-gray-500 hidden md:table-cell"><span class="bg-gray-100 text-gray-600 px-2 py-1 rounded text-xs">${accName}</span></td>
+                            <td class="p-4 text-right ${t.amount > 0 ? 'text-emerald-600 font-medium' : 'text-gray-900'}">${formatCurrency(t.amount)}</td>
+                            <td class="p-4 text-center"><button onclick="app.delTx('${t.id}')" class="text-red-400 hover:text-red-600"><i class="fa-solid fa-trash-can"></i></button></td>
+                        </tr>`; 
+                    });
                 }
                 document.getElementById('main-content').innerHTML = html + `</tbody></table></div></div>`;
             },
