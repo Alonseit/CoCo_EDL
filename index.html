@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ZeroBudget - Finanzas Familiares</title>
+    <title>CoCo EDL - Finanzas Familiares</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -32,7 +32,7 @@
                     <i class="fa-solid fa-wallet"></i>
                 </div>
                 <h1 class="text-xl font-bold tracking-tight text-gray-900 hidden sm:block">
-                    ZeroBudget <span class="text-xs font-medium text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full ml-1 align-middle">v0.1.12</span>
+                    ZeroBudget <span class="text-xs font-medium text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full ml-1 align-middle">v0.1.13</span>
                 </h1>
             </div>
             
@@ -362,6 +362,25 @@
                 store.data.categories.forEach(c => { const avail = engine.getCategoryAvailable(c.id, month); if (avail > 0) catAvailable += avail; });
                 return cash + expected - catAvailable;
             },
+            // NUEVA FUNCIÓN: Calcula la aportación necesaria este mes para cumplir un objetivo con fecha
+            getMonthlyTarget: (c, currentMonth) => {
+                if (!c.targetDate) return c.target || 0;
+                
+                const targetM = c.targetDate; // YYYY-MM
+                let p1 = currentMonth.split('-'), p2 = targetM.split('-');
+                let monthsDiff = (parseInt(p2[0]) - parseInt(p1[0])) * 12 + (parseInt(p2[1]) - parseInt(p1[1])) + 1; // +1 to include current month
+                
+                // Calcular cuánto tenemos disponible ANTES de este mes
+                let prevD = new Date(p1[0], p1[1]-2, 1);
+                let prevMonthStr = getMonthString(prevD);
+                let availableSoFar = engine.getCategoryAvailable(c.id, prevMonthStr);
+                
+                let remainingAmount = c.target - availableSoFar;
+                if (remainingAmount <= 0) return 0; // Objetivo ya alcanzado
+                if (monthsDiff <= 0) return remainingAmount; // Objetivo vence este mes o está vencido
+                
+                return remainingAmount / monthsDiff;
+            },
             getAgeOfMoney: () => {
                 let inflows = store.data.transactions.filter(t => t.amount > 0).sort((a,b) => a.date.localeCompare(b.date));
                 let outflows = store.data.transactions.filter(t => t.amount < 0).sort((a,b) => a.date.localeCompare(b.date));
@@ -391,9 +410,18 @@
 
                 store.data.categories.forEach(c => {
                     const assigned = store.data.allocations[month][c.id] || 0;
-                    let toAssign = c.type === 'variable' 
-                        ? Math.max(0, c.target - Math.max(0, engine.getCategoryAvailable(c.id, prevMonth))) - assigned 
-                        : (c.target || 0) - assigned;
+                    let toAssign = 0;
+                    
+                    if (c.targetDate) {
+                        // Es un objetivo con fecha, asignar lo exacto que requiere este mes
+                        let monthlyReq = engine.getMonthlyTarget(c, month);
+                        toAssign = Math.max(0, monthlyReq - assigned);
+                    } else {
+                        // Lógica recurrente normal
+                        toAssign = c.type === 'variable' 
+                            ? Math.max(0, c.target - Math.max(0, engine.getCategoryAvailable(c.id, prevMonth))) - assigned 
+                            : (c.target || 0) - assigned;
+                    }
                     
                     if (toAssign > 0 && tba >= toAssign) {
                         store.data.allocations[month][c.id] = assigned + toAssign;
@@ -413,6 +441,10 @@
             initPostData: () => {
                 if (store.data) {
                     if(!store.data.expectedIncome) store.data.expectedIncome = {};
+                    // Adaptación retroactiva por si hay categorías sin targetDate property
+                    store.data.categories.forEach(c => {
+                        if (c.targetDate === undefined) c.targetDate = null;
+                    });
                     document.getElementById('mode-toggle').checked = store.data.settings.isAdmin;
                 }
             },
@@ -421,7 +453,7 @@
             prevMonth: () => { let p = store.data.settings.currentMonth.split('-'); store.data.settings.currentMonth = getMonthString(new Date(p[0], p[1] - 2, 1)); store.save(); app.render(); },
             nextMonth: () => { let p = store.data.settings.currentMonth.split('-'); store.data.settings.currentMonth = getMonthString(new Date(p[0], p[1], 1)); store.save(); app.render(); },
             
-            // --- NUEVO: MODAL DE MOVIMIENTOS POR CUENTA EN VISOR ---
+            // --- MODAL DE MOVIMIENTOS POR CUENTA EN VISOR ---
             viewAccountTxs: (accountId) => {
                 const acc = store.data.accounts.find(a => a.id === accountId);
                 if (!acc) return;
@@ -503,11 +535,18 @@
                         
                         const textDisplay = `${Math.round(spent)} / ${Math.round(totalFunding)}`;
                         
+                        // Adaptar subtítulo en Visor si es un objetivo
+                        let subtitleText = `Meta: ${formatCurrency(c.target || 0)}`;
+                        if (c.targetDate) {
+                            let [ty, tm] = c.targetDate.split('-');
+                            subtitleText = `Objetivo: ${formatCurrency(c.target)} (${tm}/${ty})`;
+                        }
+
                         html += `
                         <div class="p-4 hover:bg-gray-50 transition-colors flex justify-between items-center">
                             <div class="flex-1">
                                 <h3 class="font-medium text-gray-800">${c.name}</h3>
-                                <div class="text-xs text-gray-400 mt-0.5">Meta: ${formatCurrency(c.target || 0)}</div>
+                                <div class="text-xs text-gray-400 mt-0.5">${subtitleText}</div>
                             </div>
                             <div class="flex items-center gap-4">
                                 <div class="text-right flex flex-col">
@@ -585,7 +624,20 @@
                         const assigned = store.data.allocations[month]?.[c.id] || 0;
                         const act = engine.getActivity(c.id, month);
                         const disp = engine.getCategoryAvailable(c.id, month);
-                        html += `<tr class="hover:bg-gray-50"><td class="p-4"><div class="font-medium text-gray-900">${c.name}</div><div class="text-xs text-gray-400">Meta: ${formatCurrency(c.target)}</div></td><td class="p-4 text-right"><input type="number" step="0.01" value="${assigned.toFixed(2)}" onchange="app.updateAllocation('${month}', '${c.id}', this.value)" class="w-full border border-gray-300 rounded-lg py-1.5 px-2 text-right focus:ring-emerald-500 outline-none text-sm"></td><td class="p-4 text-right text-gray-500 hidden md:table-cell">${formatCurrency(act)}</td><td class="p-4 text-right"><span onclick="if(${disp} < 0) app.openCoverModal('${month}', '${c.id}', ${Math.abs(disp)})" class="px-3 py-1 rounded-full text-sm ${disp < 0 ? 'bg-red-100 text-red-700 font-bold cursor-pointer hover:bg-red-200' : (disp > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100')}">${formatCurrency(disp)}</span></td></tr>`;
+                        
+                        // Lógica visual del objetivo
+                        let metaText = `Meta: ${formatCurrency(c.target)}`;
+                        if (c.targetDate) {
+                            let [ty, tm] = c.targetDate.split('-');
+                            let monthlyReq = engine.getMonthlyTarget(c, month);
+                            if (monthlyReq === 0 && (c.target - engine.getCategoryAvailable(c.id, getMonthString(new Date(month.split('-')[0], month.split('-')[1]-2, 1)))) <= 0) ) {
+                                metaText = `<span class="text-emerald-600 font-bold"><i class="fa-solid fa-circle-check"></i> Objetivo Completado (${tm}/${ty})</span>`;
+                            } else {
+                                metaText = `Objetivo: ${formatCurrency(c.target)} para ${tm}/${ty} (Sugiere: ${formatCurrency(monthlyReq)})`;
+                            }
+                        }
+
+                        html += `<tr class="hover:bg-gray-50"><td class="p-4"><div class="font-medium text-gray-900">${c.name}</div><div class="text-xs text-gray-400">${metaText}</div></td><td class="p-4 text-right"><input type="number" step="0.01" value="${assigned.toFixed(2)}" onchange="app.updateAllocation('${month}', '${c.id}', this.value)" class="w-full border border-gray-300 rounded-lg py-1.5 px-2 text-right focus:ring-emerald-500 outline-none text-sm"></td><td class="p-4 text-right text-gray-500 hidden md:table-cell">${formatCurrency(act)}</td><td class="p-4 text-right"><span onclick="if(${disp} < 0) app.openCoverModal('${month}', '${c.id}', ${Math.abs(disp)})" class="px-3 py-1 rounded-full text-sm ${disp < 0 ? 'bg-red-100 text-red-700 font-bold cursor-pointer hover:bg-red-200' : (disp > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100')}">${formatCurrency(disp)}</span></td></tr>`;
                     });
                 });
                 document.getElementById('main-content').innerHTML = html + `</tbody></table></div></div>`;
@@ -768,13 +820,16 @@
                     cats.forEach(c => {
                         let badgeColor = c.type === 'variable' ? 'bg-blue-100 text-blue-700' : (c.type === 'fixed' ? 'bg-purple-100 text-purple-700' : 'bg-orange-100 text-orange-700');
                         let typeName = c.type === 'variable' ? 'Variable (Absorbe)' : (c.type === 'fixed' ? 'Fijo (No absorbe)' : 'Acumulativo (Fondo)');
+                        if (c.targetDate) typeName = 'Objetivo con Fecha';
+
                         html += `
                             <div class="p-4 flex justify-between items-center hover:bg-gray-50 group transition-colors">
                                 <div>
                                     <div class="font-medium text-gray-900">${c.name}</div>
                                     <div class="flex gap-2 items-center mt-1">
                                         <span class="text-[10px] px-2 py-0.5 rounded-full uppercase font-bold tracking-wider ${badgeColor}">${typeName}</span>
-                                        <span class="text-xs text-gray-500">Meta: ${formatCurrency(c.target)}</span>
+                                        <span class="text-xs text-gray-500">Meta total: ${formatCurrency(c.target)}</span>
+                                        ${c.targetDate ? `<span class="text-xs text-gray-500"><i class="fa-regular fa-calendar ml-1"></i> ${c.targetDate}</span>` : ''}
                                     </div>
                                 </div>
                                 <div class="opacity-0 group-hover:opacity-100 transition-opacity flex gap-3">
@@ -828,7 +883,7 @@
 
             // CATEGORY MODAL
             openCategoryModal: (catId = null, preselectGroupId = null) => {
-                const c = catId ? store.data.categories.find(x => x.id === catId) : { name: '', type: 'variable', target: 0, groupId: preselectGroupId };
+                const c = catId ? store.data.categories.find(x => x.id === catId) : { name: '', type: 'variable', target: 0, groupId: preselectGroupId, targetDate: null };
                 const isEdit = !!catId;
                 
                 let groupOpts = '';
@@ -840,25 +895,43 @@
                     <div class="space-y-4">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
-                            <input type="text" id="cat-name" value="${c.name}" placeholder="Ej. Combustible, Restaurantes..." class="w-full border-gray-300 rounded-lg shadow-sm p-2 border">
+                            <input type="text" id="cat-name" value="${c.name}" placeholder="Ej. Seguro Coche, Vacaciones..." class="w-full border-gray-300 rounded-lg shadow-sm p-2 border">
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Grupo</label>
                             <select id="cat-group" class="w-full border-gray-300 rounded-lg shadow-sm p-2 border">${groupOpts}</select>
                         </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Comportamiento (Tipo YNAB)</label>
-                            <select id="cat-type" class="w-full border-gray-300 rounded-lg shadow-sm p-2 border">
-                                <option value="variable" ${c.type === 'variable' ? 'selected' : ''}>Recurrente Variable (Needed for Spending: absorbe sobrante)</option>
-                                <option value="fixed" ${c.type === 'fixed' ? 'selected' : ''}>Recurrente Fijo (Exige cantidad exacta siempre)</option>
-                                <option value="accumulative" ${c.type === 'accumulative' ? 'selected' : ''}>Acumulativo (Sinking Fund: guarda sobrante)</option>
-                            </select>
+                        
+                        <div class="bg-gray-50 p-4 rounded-xl border border-gray-200 space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Tipo de Meta</label>
+                                <select id="cat-is-goal" class="w-full border-gray-300 rounded-lg shadow-sm p-2 border" onchange="document.getElementById('goal-date-wrapper').style.display = this.value === 'true' ? 'block' : 'none'; document.getElementById('cat-type-wrapper').style.display = this.value === 'true' ? 'none' : 'block';">
+                                    <option value="false" ${!c.targetDate ? 'selected' : ''}>Recurrente (Asignación Mensual)</option>
+                                    <option value="true" ${c.targetDate ? 'selected' : ''}>Objetivo (Total para una fecha)</option>
+                                </select>
+                            </div>
+                            
+                            <div id="cat-type-wrapper" style="display: ${c.targetDate ? 'none' : 'block'};">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Comportamiento del Sobrante (YNAB)</label>
+                                <select id="cat-type" class="w-full border-gray-300 rounded-lg shadow-sm p-2 border">
+                                    <option value="variable" ${c.type === 'variable' ? 'selected' : ''}>Absorbe sobrante del mes pasado</option>
+                                    <option value="fixed" ${c.type === 'fixed' ? 'selected' : ''}>No absorbe (Fijo todos los meses)</option>
+                                    <option value="accumulative" ${c.type === 'accumulative' ? 'selected' : ''}>Fondo de ahorro acumulativo</option>
+                                </select>
+                            </div>
+
+                            <div id="goal-date-wrapper" style="display: ${c.targetDate ? 'block' : 'none'};">
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Mes Límite para alcanzar el objetivo</label>
+                                <input type="month" id="cat-target-date" value="${c.targetDate || ''}" class="w-full border-gray-300 rounded-lg shadow-sm p-2 border focus:ring-emerald-500 focus:border-emerald-500 text-sm">
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Importe Meta (€)</label>
+                                <input type="number" id="cat-target" step="0.01" value="${c.target}" placeholder="0.00" class="w-full border-gray-300 rounded-lg shadow-sm p-2 border text-lg">
+                                <p class="text-xs text-gray-400 mt-1">Si es recurrente, es la meta mensual. Si es un Objetivo, es el total a alcanzar.</p>
+                            </div>
                         </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Meta Mensual (€)</label>
-                            <input type="number" id="cat-target" step="0.01" value="${c.target}" placeholder="0.00" class="w-full border-gray-300 rounded-lg shadow-sm p-2 border">
-                            <p class="text-xs text-gray-400 mt-1">El importe que intentará asignar el botón "Auto-asignar".</p>
-                        </div>
+
                         <input type="hidden" id="cat-id" value="${catId || ''}">
                     </div>
                 `;
@@ -872,17 +945,25 @@
                 const id = document.getElementById('cat-id').value;
                 const name = document.getElementById('cat-name').value.trim();
                 const groupId = document.getElementById('cat-group').value;
-                const type = document.getElementById('cat-type').value;
                 let target = parseFloat(document.getElementById('cat-target').value);
+                
+                const isGoal = document.getElementById('cat-is-goal').value === 'true';
+                const type = isGoal ? 'accumulative' : document.getElementById('cat-type').value; // Los objetivos por fecha actúan estructuralmente como acumulativos
+                
+                let targetDate = null;
+                if (isGoal) {
+                    targetDate = document.getElementById('cat-target-date').value;
+                    if (!targetDate) return ui.showToast("Debes seleccionar un mes límite", "error");
+                }
                 
                 if(!name) return ui.showToast("El nombre es obligatorio", "error");
                 if(isNaN(target) || target < 0) target = 0;
 
                 if (id) {
                     const cat = store.data.categories.find(c => c.id === id);
-                    cat.name = name; cat.groupId = groupId; cat.type = type; cat.target = target;
+                    cat.name = name; cat.groupId = groupId; cat.type = type; cat.target = target; cat.targetDate = targetDate;
                 } else {
-                    store.data.categories.push({ id: generateId(), groupId, name, type, target });
+                    store.data.categories.push({ id: generateId(), groupId, name, type, target, targetDate });
                 }
                 store.save(); ui.closeModal(); app.render(); ui.showToast("Categoría guardada", "success");
             },
