@@ -29,7 +29,9 @@
                 <div class="bg-emerald-500 text-white p-2 rounded-lg">
                     <i class="fa-solid fa-wallet"></i>
                 </div>
-                <h1 class="text-xl font-bold tracking-tight text-gray-900 hidden sm:block">ZeroBudget</h1>
+                <h1 class="text-xl font-bold tracking-tight text-gray-900 hidden sm:block">
+                    ZeroBudget <span class="text-xs font-medium text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full ml-1 align-middle">v0.1.8</span>
+                </h1>
             </div>
             
             <div id="nav-month-selector" class="hidden items-center gap-4">
@@ -198,7 +200,6 @@
                     if (localEncrypted) {
                         try { 
                             store.data = await cryptoEngine.decryptData(localEncrypted, pin);
-                            app.render(); 
                             return;
                         } catch(e) { 
                             console.warn("Fallo descifrado local, intentando nube:", e);
@@ -209,7 +210,6 @@
                     if(GAS_URL === 'PEGA_AQUI_LA_URL_DEL_WEBAPP_DE_GAS') {
                         store.data = store.generateMockData();
                         await store.save(); 
-                        app.render();
                         return;
                     }
 
@@ -223,7 +223,6 @@
                             store.data = await cryptoEngine.decryptData(encryptedPayloadBase64, pin);
                             const newEncrypted = await cryptoEngine.encryptData(store.data, pin);
                             localStorage.setItem('zenbudget_data_enc', newEncrypted);
-                            app.render();
                             ui.showToast("Sincronización completa", "success");
                             return;
                         } catch(e) {
@@ -236,12 +235,10 @@
                     
                     store.data = store.generateMockData();
                     await store.save(); 
-                    app.render();
 
                 } catch(e) { 
                     console.error("Error crítico en init:", e);
                     store.data = store.generateMockData();
-                    app.render();
                     ui.showToast("Modo de emergencia activado", "error");
                 }
             },
@@ -274,6 +271,7 @@
                         store.data = parsed;
                         store.save(); 
                         ui.showToast("Base de datos importada y cifrada", "success");
+                        app.initPostData(); // Re-inicializar propiedades faltantes tras importar
                         app.render();
                     } else throw new Error("Inválido");
                 } catch(e) { ui.showToast("Error importando", "error"); }
@@ -286,6 +284,7 @@
                     categories: [{ id: 'cat_1', groupId: 'grp_1', name: 'Alquiler/Hipoteca', type: 'fixed', target: 1000 }, { id: 'cat_2', groupId: 'grp_2', name: 'Supermercado', type: 'variable', target: 450 }],
                     transactions: [],
                     allocations: { [tm]: { 'cat_1': 1000, 'cat_2': 450 } },
+                    expectedIncome: {},
                     settings: { lastReconciled: `${tm}-01`, currentMonth: tm, isAdmin: true, activeTab: 'settings' }
                 };
             }
@@ -308,11 +307,13 @@
                 }
                 return available;
             },
+            getExpectedIncome: (month) => store.data.expectedIncome?.[month] || 0,
             getToBeAssigned: (month) => {
                 const cash = store.data.transactions.filter(t => t.date.substring(0, 7) <= month).reduce((sum, t) => sum + t.amount, 0);
+                const expected = engine.getExpectedIncome(month);
                 let catAvailable = 0;
                 store.data.categories.forEach(c => { const avail = engine.getCategoryAvailable(c.id, month); if (avail > 0) catAvailable += avail; });
-                return cash - catAvailable;
+                return cash + expected - catAvailable;
             },
             getAgeOfMoney: () => {
                 let inflows = store.data.transactions.filter(t => t.amount > 0).sort((a,b) => a.date.localeCompare(b.date));
@@ -361,7 +362,14 @@
         const app = {
             init: async () => {
                 await store.init();
-                if(store.data) document.getElementById('mode-toggle').checked = store.data.settings.isAdmin;
+                app.initPostData();
+                app.render();
+            },
+            initPostData: () => {
+                if (store.data) {
+                    if(!store.data.expectedIncome) store.data.expectedIncome = {};
+                    document.getElementById('mode-toggle').checked = store.data.settings.isAdmin;
+                }
             },
             toggleMode: () => { store.data.settings.isAdmin = document.getElementById('mode-toggle').checked; store.save(); app.render(); },
             setTab: (tabId) => { store.data.settings.activeTab = tabId; store.save(); app.render(); },
@@ -438,8 +446,27 @@
             // --- ADMIN BUDGET ---
             renderAdminBudget: () => {
                 const month = store.data.settings.currentMonth;
+                const expected = engine.getExpectedIncome(month);
                 const tba = engine.getToBeAssigned(month);
-                let html = `<div class="max-w-5xl mx-auto space-y-6 pb-20"><div class="${tba >= 0 ? 'bg-emerald-600' : 'bg-red-600'} text-white rounded-xl shadow-lg p-6 flex flex-col sm:flex-row items-center justify-between gap-4"><div><h2 class="text-emerald-100 text-sm font-semibold uppercase tracking-widest mb-1">Disponible para Asignar</h2><div class="text-4xl font-bold tracking-tight">${formatCurrency(tba)}</div></div><button onclick="engine.autoAssignMonth('${month}')" class="bg-white/20 hover:bg-white/30 backdrop-blur-sm px-5 py-2.5 rounded-lg text-white font-medium flex items-center gap-2"><i class="fa-solid fa-wand-magic-sparkles"></i> Auto-asignar</button></div><div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden"><table class="w-full text-left border-collapse"><thead><tr class="bg-gray-50 border-b border-gray-200 text-xs uppercase text-gray-500"><th class="p-4 font-semibold">Categoría</th><th class="p-4 font-semibold text-right w-32">Asignado</th><th class="p-4 font-semibold hidden md:table-cell text-right">Actividad</th><th class="p-4 font-semibold text-right">Disponible</th></tr></thead><tbody class="divide-y divide-gray-100">`;
+                const realCash = tba - expected;
+                
+                let html = `<div class="max-w-5xl mx-auto space-y-6 pb-20">
+                    <div class="${tba >= 0 ? 'bg-emerald-600' : 'bg-red-600'} text-white rounded-xl shadow-lg p-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+                        <div class="flex-1 w-full">
+                            <h2 class="text-emerald-100 text-sm font-semibold uppercase tracking-widest mb-2">Disponible para Asignar</h2>
+                            <div class="flex flex-col md:flex-row items-start md:items-end gap-3 md:gap-4 w-full">
+                                <div class="text-4xl md:text-5xl font-bold tracking-tight">${formatCurrency(tba)}</div>
+                                <div class="text-sm bg-black/15 px-3 py-1.5 rounded-lg flex items-center gap-2 w-full md:w-auto mt-2 md:mt-0 mb-1">
+                                    <span>Real: <span class="font-bold">${formatCurrency(realCash)}</span></span>
+                                    <span class="text-emerald-200 border-l border-emerald-400/30 pl-2">Previsto (Ej. Nómina):</span>
+                                    <input type="number" step="0.01" value="${expected ? expected.toFixed(2) : ''}" placeholder="0.00" onchange="app.updateExpectedIncome('${month}', this.value)" class="bg-transparent border-b border-white/30 text-white w-20 outline-none text-right focus:border-white transition-colors placeholder-emerald-100/50 font-bold">
+                                </div>
+                            </div>
+                        </div>
+                        <button onclick="engine.autoAssignMonth('${month}')" class="bg-white/20 hover:bg-white/30 backdrop-blur-sm px-5 py-2.5 rounded-lg text-white font-medium flex items-center gap-2 shrink-0 transition-colors w-full sm:w-auto justify-center"><i class="fa-solid fa-wand-magic-sparkles"></i> Auto-asignar</button>
+                    </div>
+                    
+                    <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden"><table class="w-full text-left border-collapse"><thead><tr class="bg-gray-50 border-b border-gray-200 text-xs uppercase text-gray-500"><th class="p-4 font-semibold">Categoría</th><th class="p-4 font-semibold text-right w-32">Asignado</th><th class="p-4 font-semibold hidden md:table-cell text-right">Actividad</th><th class="p-4 font-semibold text-right">Disponible</th></tr></thead><tbody class="divide-y divide-gray-100">`;
                 
                 if(store.data.categoryGroups.length === 0) {
                     html += `<tr><td colspan="4" class="p-8 text-center text-gray-500">No hay categorías configuradas. Ve a "Ajustes y Categorías" para crear tu presupuesto.</td></tr>`;
@@ -461,6 +488,11 @@
             updateAllocation: (month, catId, valStr) => {
                 if(!store.data.allocations[month]) store.data.allocations[month] = {};
                 store.data.allocations[month][catId] = isNaN(parseFloat(valStr)) ? 0 : parseFloat(valStr);
+                store.save(); app.render();
+            },
+            updateExpectedIncome: (month, valStr) => {
+                if(!store.data.expectedIncome) store.data.expectedIncome = {};
+                store.data.expectedIncome[month] = isNaN(parseFloat(valStr)) ? 0 : parseFloat(valStr);
                 store.save(); app.render();
             },
             openCoverModal: (month, targetId, amountNeeded) => {
@@ -508,17 +540,34 @@
             renderAdminAccounts: () => {
                 let html = `<div class="max-w-4xl mx-auto space-y-6 pb-20">
                     <div class="flex justify-between items-center">
-                        <h2 class="text-lg font-bold text-gray-800">Cuentas Operativas</h2>
+                        <h2 class="text-lg font-bold text-gray-800">Cuentas Operativas y Deuda</h2>
                         <button onclick="settingsApp.openAccountModal()" class="bg-gray-800 hover:bg-gray-900 text-white px-4 py-2 rounded-lg text-sm"><i class="fa-solid fa-plus mr-2"></i>Nueva Cuenta</button>
                     </div>
                     <div class="bg-white rounded-xl shadow-sm border overflow-hidden"><div class="divide-y divide-gray-100">`;
                 
-                let liq = 0;
+                let liq = 0, debt = 0;
+                const typeLabels = { checking: 'Corriente', saving: 'Ahorro', cash: 'Efectivo', credit: 'Tarjeta de Crédito' };
+                
                 store.data.accounts.forEach(a => {
-                    const b = store.data.transactions.filter(t => t.accountId === a.id).reduce((s, t) => s + t.amount, 0); liq += b;
-                    html += `<div class="p-5 flex justify-between items-center group"><div><div class="font-medium">${a.name}</div><div class="text-xs text-gray-500 capitalize">${a.type === 'checking' ? 'Corriente' : (a.type === 'saving' ? 'Ahorro' : 'Efectivo')}</div></div><div class="flex items-center gap-4"><div class="text-xl font-bold">${formatCurrency(b)}</div><button onclick="settingsApp.openAccountModal('${a.id}')" class="text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 transition"><i class="fa-solid fa-pen-to-square"></i></button></div></div>`;
+                    const b = store.data.transactions.filter(t => t.accountId === a.id).reduce((s, t) => s + t.amount, 0); 
+                    if (a.type === 'credit') { debt += b; } else { liq += b; }
+                    const typeLabel = typeLabels[a.type] || 'Otra';
+                    html += `<div class="p-5 flex justify-between items-center group"><div><div class="font-medium">${a.name}</div><div class="text-xs text-gray-500 capitalize">${typeLabel}</div></div><div class="flex items-center gap-4"><div class="text-xl font-bold ${b < 0 && a.type === 'credit' ? 'text-red-600' : ''}">${formatCurrency(b)}</div><button onclick="settingsApp.openAccountModal('${a.id}')" class="text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 transition"><i class="fa-solid fa-pen-to-square"></i></button></div></div>`;
                 });
-                document.getElementById('main-content').innerHTML = html + `<div class="p-5 bg-gray-100 flex justify-between font-bold text-emerald-600"><div class="text-gray-800 uppercase text-sm">Liquidez Total</div><div class="text-2xl">${formatCurrency(liq)}</div></div></div></div>`;
+                
+                const patrimonioNeto = liq + debt;
+                
+                document.getElementById('main-content').innerHTML = html + `
+                    <div class="p-5 bg-gray-50 border-t border-gray-200 flex flex-col md:flex-row justify-between items-center gap-4 font-bold">
+                        <div class="flex gap-6 text-sm">
+                            <div class="text-gray-600 uppercase">Liquidez: <span class="text-emerald-600">${formatCurrency(liq)}</span></div>
+                            <div class="text-gray-600 uppercase">Deuda: <span class="text-red-600">${formatCurrency(debt)}</span></div>
+                        </div>
+                        <div class="flex items-center gap-3 text-gray-800 uppercase text-sm">
+                            Patrimonio Neto 
+                            <div class="text-2xl ${patrimonioNeto >= 0 ? 'text-emerald-600' : 'text-red-600'}">${formatCurrency(patrimonioNeto)}</div>
+                        </div>
+                    </div></div></div>`;
             },
             // --- ADMIN DATA ---
             renderAdminData: () => {
@@ -722,7 +771,7 @@
                     <div class="space-y-4">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Nombre de la Cuenta</label>
-                            <input type="text" id="acc-name" value="${a.name}" placeholder="Ej. BBVA Nómina, Efectivo en Casa..." class="w-full border-gray-300 rounded-lg shadow-sm p-2 border">
+                            <input type="text" id="acc-name" value="${a.name}" placeholder="Ej. BBVA Nómina, Visa, Efectivo en Casa..." class="w-full border-gray-300 rounded-lg shadow-sm p-2 border">
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Tipo de Cuenta</label>
@@ -730,6 +779,7 @@
                                 <option value="checking" ${a.type === 'checking' ? 'selected' : ''}>Corriente (Cheques / Nómina)</option>
                                 <option value="saving" ${a.type === 'saving' ? 'selected' : ''}>Ahorro (Hucha)</option>
                                 <option value="cash" ${a.type === 'cash' ? 'selected' : ''}>Efectivo (Bolsillo)</option>
+                                <option value="credit" ${a.type === 'credit' ? 'selected' : ''}>Tarjeta de Crédito</option>
                             </select>
                         </div>
                         <input type="hidden" id="acc-id" value="${accId || ''}">
