@@ -625,7 +625,7 @@
                         if (c.targetDate && typeof c.targetDate === 'string' && c.targetDate.includes('-')) {
                             let [ty, tm] = c.targetDate.split('-');
                             let monthlyReq = engine.getMonthlyTarget(c, month);
-                            if (monthlyReq === 0 && (c.target - engine.getCategoryAvailable(c.id, getMonthString(new Date(month.split('-')[0], month.split('-')[1]-2, 1)))) <= 0) ) {
+                            if (monthlyReq === 0 && (c.target - engine.getCategoryAvailable(c.id, getMonthString(new Date(month.split('-')[0], month.split('-')[1]-2, 1))) <= 0)) {
                                 metaText = `<span class="text-emerald-600 font-bold"><i class="fa-solid fa-circle-check"></i> Objetivo Completado (${tm}/${ty})</span>`;
                             } else {
                                 metaText = `Objetivo: ${formatCurrency(c.target)} para ${tm}/${ty} (Sugiere: ${formatCurrency(monthlyReq)})`;
